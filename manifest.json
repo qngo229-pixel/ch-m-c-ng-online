@@ -1,0 +1,18 @@
+{
+  "name": "Chấm Công GPS 1 Chạm",
+  "short_name": "Chấm Công",
+  "description": "Ứng dụng chấm công GPS 15 người gọn nhẹ, 1 nút chạm, chụp ảnh mặt, bảo mật PIN 4-6 số",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0f19",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
