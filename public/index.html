@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Chấm Công GPS 1 Chạm - Gọn Nhẹ 15 Người</title>
+  <meta name="description" content="Ứng dụng chấm công GPS gọn nhẹ cho 15 người, 1 nút bấm tự đảo Vào/Ra ca, bảo mật mã PIN">
+  <meta name="theme-color" content="#10b981">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/styles.css?v=3">
+</head>
+<body>
+
+  <!-- APP HEADER -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">📍</div>
+        <div>
+          <span class="brand-title">CHẤM CÔNG GPS</span>
+          <span class="brand-badge">15 NV</span>
+        </div>
+      </div>
+
+      <!-- Header User info (shown when logged in) -->
+      <div id="header-user" class="header-user hidden">
+        <div class="user-badge">
+          <span id="header-user-name" class="user-name">Nguyễn Văn An</span>
+          <span id="header-user-role" class="user-role">Nhân viên • 0911000001</span>
+        </div>
+        <button id="btn-toggle-admin-view" class="btn-secondary hidden" style="padding: 6px 10px; font-size: 0.78rem;">
+          ⚙️ Quản lý
+        </button>
+        <button id="btn-logout" class="btn-secondary" style="padding: 6px 10px; font-size: 0.78rem;" title="Đăng xuất">
+          🚪 Thoát
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN WRAPPER -->
+  <main class="main-wrapper">
+
+    <!-- ==================================================== -->
+    <!-- VIEW 1: MÀN HÌNH ĐĂNG NHẬP (PHONE + PIN 4-6 SỐ)     -->
+    <!-- ==================================================== -->
+    <div id="view-login" class="login-container">
+      <div class="card">
+        <div class="login-header">
+          <h2>Đăng Nhập Chấm Công</h2>
+          <p>Nhập số điện thoại & mã PIN để bắt đầu</p>
+        </div>
+
+        <div id="login-alert" class="alert alert-danger hidden"></div>
+
+        <form id="login-form">
+          <div class="form-group">
+            <label class="form-label" for="login-phone">Số điện thoại</label>
+            <div class="input-with-icon">
+              <span class="input-icon">📱</span>
+              <input type="tel" id="login-phone" class="form-input" placeholder="Ví dụ: 0911000001" required autocomplete="tel" inputmode="numeric">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="login-pin">Mã PIN (4 – 6 số)</label>
+            <div class="input-with-icon">
+              <span class="input-icon">🔑</span>
+              <input type="password" id="login-pin" class="form-input" placeholder="Nhập 4-6 số PIN" maxlength="6" required autocomplete="current-password" inputmode="numeric">
+              <button type="button" id="btn-toggle-pin" class="toggle-pin-btn" title="Hiện/ẩn PIN">👁️</button>
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="login-remember" checked>
+            <span>Máy nhớ đăng nhập 30 ngày</span>
+          </label>
+
+          <button type="submit" id="btn-submit-login" class="btn-primary">
+            <span>ĐĂNG NHẬP</span> ➔
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 2: MÀN HÌNH CHẤM CÔNG NHÂN VIÊN                -->
+    <!-- ==================================================== -->
+    <div id="view-attendance" class="attendance-container hidden">
+
+      <!-- Đồng hồ thực tế & Trạng thái hiện tại -->
+      <div class="clock-card">
+        <div id="live-time" class="live-time">00:00:00</div>
+        <div id="live-date" class="live-date">Đang tải ngày...</div>
+        <div class="status-badge-container">
+          <div id="current-shift-status" class="status-chip out-shift">
+            ⚪ Đang kiểm tra trạng thái ca...
+          </div>
+        </div>
+      </div>
+
+      <!-- KHU VỰC NÚT CHẤM CÔNG DUY NHẤT -->
+      <div class="punch-area">
+        <div class="punch-btn-wrapper">
+          <div class="pulse-ring"></div>
+          <button id="btn-punch" class="punch-btn btn-in" title="Bấm để chấm công">
+            <div id="punch-icon" class="punch-icon">☀️</div>
+            <div id="punch-text" class="punch-text">VÀO CA</div>
+            <div id="punch-subtext" class="punch-subtext">Lấy GPS & Giờ</div>
+          </button>
+        </div>
+
+        <div id="gps-status-hint" class="punch-hint">
+          <span>📡 Định vị GPS độ chính xác cao sẵn sàng</span>
+          <a href="javascript:void(0)" onclick="openGpsModal()" style="color: #60a5fa; text-decoration: underline; margin-left: 4px;">(Trợ giúp)</a>
+        </div>
+      </div>
+
+      <!-- Thẻ thông báo kết quả chấm công gần nhất -->
+      <div id="punch-result-card" class="punch-result-card hidden">
+        <div class="result-row">
+          <span class="result-label">Hành động:</span>
+          <span id="res-type" class="result-value text-success">Vào ca thành công</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Thời gian:</span>
+          <span id="res-time" class="result-value">--:--:--</span>
+        </div>
+        <div class="result-row" id="res-photo-row">
+          <span class="result-label">Ảnh mặt:</span>
+          <img id="res-photo-img" src="" alt="Ảnh selfie" class="face-thumb" onclick="openPhotoViewer(this.src, 'Ảnh Chấm Công Vừa Chụp')">
+        </div>
+        <div class="result-row">
+          <span class="result-label">Tọa độ GPS:</span>
+          <span id="res-gps" class="result-value">--, --</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Sai số vị trí:</span>
+          <span id="res-acc" class="result-value">± 0m</span>
+        </div>
+        <div style="margin-top: 6px; text-align: right;">
+          <a id="res-map-link" href="#" target="_blank" class="btn-map">
+            📍 Mở trên Google Maps ➔
+          </a>
+        </div>
+      </div>
+
+      <!-- Lịch sử chấm công gần đây của nhân viên -->
+      <div class="section-header">
+        <h3 class="section-title">🕒 Lịch sử chấm công của bạn</h3>
+        <button id="btn-refresh-my-history" class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;">
+          🔄 Làm mới
+        </button>
+      </div>
+
+      <div id="my-history-list" class="history-list">
+        <!-- Rendered by JavaScript -->
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <p>Chưa có lượt chấm công nào hôm nay.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 3: BẢNG QUẢN TRỊ (DÀNH CHO QUẢN LÝ / ADMIN)     -->
+    <!-- ==================================================== -->
+    <div id="view-admin" class="admin-container hidden">
+
+      <!-- Admin Tabs Navigation -->
+      <div class="admin-tabs">
+        <button id="tab-btn-history" class="tab-btn active" onclick="switchAdminTab('history')">
+          📊 Lịch sử chấm công (15 NV)
+        </button>
+        <button id="tab-btn-staff" class="tab-btn" onclick="switchAdminTab('staff')">
+          👥 Danh sách & Đổi PIN
+        </button>
+        <button class="tab-btn" onclick="showAttendanceView()">
+          🕒 Tự chấm công
+        </button>
+      </div>
+
+      <!-- Quick Metrics Cards -->
+      <div class="stat-grid">
+        <div class="stat-card">
+          <span class="stat-title">TỔNG NHÂN SỰ</span>
+          <span id="stat-total-users" class="stat-num">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-title">ĐANG TRONG CA</span>
+          <span id="stat-in-shift" class="stat-num text-success">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-title">CHẤM CÔNG HÔM NAY</span>
+          <span id="stat-today-punches" class="stat-num">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-title">TÀI KHOẢN BỊ KHÓA</span>
+          <span id="stat-locked-users" class="stat-num text-danger">0</span>
+        </div>
+      </div>
+
+      <!-- TAB 1: TOÀN BỘ LỊCH SỬ CHẤM CÔNG & LINK BẢN ĐỒ -->
+      <div id="admin-tab-history">
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+          <select id="filter-date" class="filter-select">
+            <option value="today">📅 Hôm nay</option>
+            <option value="all">📅 Tất cả các ngày</option>
+          </select>
+
+          <select id="filter-user" class="filter-select">
+            <option value="all">👤 Tất cả nhân viên</option>
+          </select>
+
+          <select id="filter-type" class="filter-select">
+            <option value="all">🔄 Tất cả (Vào & Ra ca)</option>
+            <option value="IN">🟢 Chỉ Vào ca</option>
+            <option value="OUT">🔴 Chỉ Ra ca</option>
+          </select>
+
+          <button id="btn-admin-refresh" class="btn-secondary">
+            🔄 Làm mới
+          </button>
+
+          <button id="btn-export-csv" class="btn-success" style="margin-left: auto;">
+            📥 Xuất Excel (CSV)
+          </button>
+        </div>
+
+        <!-- Attendance Records Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 50px;">Ảnh Mặt</th>
+                <th>Thời Gian</th>
+                <th>Nhân Viên</th>
+                <th>SĐT</th>
+                <th>Loại Ca</th>
+                <th>Tọa Độ & Sai Số GPS</th>
+                <th>Bản Đồ</th>
+              </tr>
+            </thead>
+            <tbody id="admin-history-tbody">
+              <tr>
+                <td colspan="7" class="text-center" style="padding: 24px; color: var(--text-dim);">
+                  Đang tải dữ liệu chấm công...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 2: QUẢN LÝ NHÂN VIÊN, ĐỔI PIN, KHÓA / MỞ KHÓA -->
+      <div id="admin-tab-staff" class="hidden">
+        <div class="section-header">
+          <h3 class="section-title">👥 Danh sách nhân viên (Tối đa 15 người)</h3>
+          <button class="btn-primary" style="width: auto; padding: 8px 16px;" onclick="openAddUserModal()">
+            ➕ Thêm nhân viên
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Họ và Tên</th>
+                <th>Số Điện Thoại</th>
+                <th>Vai Trò</th>
+                <th>Ca Hiện Tại</th>
+                <th>Trạng Thái</th>
+                <th>Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody id="admin-staff-tbody">
+              <!-- Rendered by JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ==================================================== -->
+  <!-- MODAL 1: THÊM NHÂN VIÊN MỚI                          -->
+  <!-- ==================================================== -->
+  <div id="modal-add-user" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">➕ Thêm Nhân Viên Mới</h3>
+        <button class="modal-close" onclick="closeModal('modal-add-user')">&times;</button>
+      </div>
+
+      <form id="form-add-user">
+        <div class="form-group">
+          <label class="form-label">Họ và Tên</label>
+          <input type="text" id="add-user-name" class="form-input" placeholder="Ví dụ: Lê Thị Hoa" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Số điện thoại</label>
+          <input type="tel" id="add-user-phone" class="form-input" placeholder="Ví dụ: 0912345678" required inputmode="numeric">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Mã PIN ban đầu (4 – 6 số)</label>
+          <input type="password" id="add-user-pin" class="form-input" placeholder="Ví dụ: 1234" maxlength="6" required inputmode="numeric">
+          <small style="color: var(--text-dim); display: block; margin-top: 4px;">PIN sẽ được mã hóa an toàn khi lưu trữ.</small>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Vai trò</label>
+          <select id="add-user-role" class="form-input" style="padding-left: 14px;">
+            <option value="employee">Nhân viên thông thường</option>
+            <option value="admin">Quản lý (Admin)</option>
+          </select>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-add-user')">Hủy</button>
+          <button type="submit" class="btn-primary" style="width: auto;">Thêm nhân viên</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- MODAL 2: ĐỔI MÃ PIN NHÂN VIÊN                        -->
+  <!-- ==================================================== -->
+  <div id="modal-change-pin" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">🔑 Đổi Mã PIN Nhân Viên</h3>
+        <button class="modal-close" onclick="closeModal('modal-change-pin')">&times;</button>
+      </div>
+
+      <form id="form-change-pin">
+        <input type="hidden" id="change-pin-user-id">
+        <div class="form-group">
+          <label class="form-label">Nhân viên:</label>
+          <input type="text" id="change-pin-user-name" class="form-input" disabled style="opacity: 0.7;">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Mã PIN Mới (4 – 6 số)</label>
+          <input type="password" id="change-pin-val" class="form-input" placeholder="Nhập PIN mới (4-6 số)" maxlength="6" required inputmode="numeric">
+          <small style="color: #34d399; display: block; margin-top: 6px;">
+            ✓ Khi đổi PIN, các lần nhập sai trước đó và khóa tạm thời sẽ tự động được xóa bỏ.
+          </small>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-change-pin')">Hủy</button>
+          <button type="submit" class="btn-primary" style="width: auto;">Xác nhận Đổi PIN</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- MODAL 3: HƯỚNG DẪN GPS & KẾT NỐI 4G / 5G / WI-FI   -->
+  <!-- ==================================================== -->
+  <div id="modal-gps-help" class="modal-overlay">
+    <div class="modal-box" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📡 Hướng Dẫn Định Vị GPS Điện Thoại</h3>
+        <button class="modal-close" onclick="closeModal('modal-gps-help')">&times;</button>
+      </div>
+
+      <div style="font-size: 0.88rem; color: #cbd5e1; display: flex; flex-direction: column; gap: 12px; line-height: 1.6;">
+        <div>
+          <b style="color: #60a5fa;">📱 1. Bật quyền vị trí trên iPhone (Safari):</b>
+          <p>Vào <b>Cài đặt (Settings)</b> ➔ <b>Quyền riêng tư & Bảo mật</b> ➔ <b>Dịch vụ định vị</b> ➔ bật <b>Bật</b>. Sau đó kéo xuống chọn <b>Trang web Safari</b> ➔ chọn <b>"Khi dùng ứng dụng"</b> và bật công tắc <b>"Vị trí chính xác"</b>.</p>
+        </div>
+
+        <div>
+          <b style="color: #34d399;">🤖 2. Bật quyền vị trí trên Android (Chrome):</b>
+          <p>Trên trình duyệt Chrome, bấm vào biểu tượng <b>Cài đặt trang web</b> (hoặc ổ khóa cạnh thanh địa chỉ) ➔ chọn <b>Quyền (Permissions)</b> ➔ <b>Vị trí (Location)</b> ➔ chọn <b>Cho phép (Allow)</b>.</p>
+        </div>
+
+        <div>
+          <b style="color: #fbbf24;">⚡ 3. Chấm công mọi nơi qua mạng 4G / 5G:</b>
+          <p>Khi dùng mạng 4G/5G ngoài văn phòng, trình duyệt yêu cầu đường link bảo mật <b>HTTPS</b> để kích hoạt chip GPS vệ tinh. Quản lý chỉ cần chạy file <code>chay_online_4g_5g.bat</code> để lấy đường link HTTPS gửi cho nhân viên.</p>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-primary" style="width: auto;" onclick="closeModal('modal-gps-help')">Đã hiểu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- MODAL 4: CHỤP ẢNH MẶT XÁC THỰC (FACE SELFIE)         -->
+  <!-- ==================================================== -->
+  <div id="modal-camera" class="modal-overlay">
+    <div class="modal-box camera-modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">📸 Chụp Ảnh Mặt Chấm Công</h3>
+        <button class="modal-close" onclick="closeCameraModal()">&times;</button>
+      </div>
+
+      <div class="camera-body">
+        <p class="camera-instruction">Vui lòng nhìn thẳng vào camera để xác thực khuôn mặt</p>
+
+        <!-- Viewfinder -->
+        <div class="camera-viewport">
+          <video id="camera-video" autoplay playsinline muted></video>
+          <div class="face-guide-oval"></div>
+          <div id="camera-loading" class="camera-loading">
+            <div class="camera-spinner"></div>
+            <span>Đang mở camera...</span>
+          </div>
+          <canvas id="camera-canvas" class="hidden"></canvas>
+          <img id="camera-preview-img" class="camera-preview hidden" alt="Ảnh chụp">
+        </div>
+
+        <!-- Buttons area -->
+        <div class="camera-actions">
+          <button type="button" id="btn-snap-photo" class="btn-primary btn-snap">
+            <span>📸 BẤM CHỤP & CHẤM CÔNG</span>
+          </button>
+          
+          <div class="camera-sub-actions">
+            <button type="button" id="btn-switch-cam" class="btn-secondary btn-sm-sub">
+              🔄 Đổi Camera
+            </button>
+            <label for="camera-fallback-file" class="btn-secondary btn-sm-sub" style="cursor: pointer;">
+              📁 Chọn ảnh
+              <input type="file" id="camera-fallback-file" accept="image/*" capture="user" class="hidden">
+            </label>
+            <button type="button" id="btn-retake-photo" class="btn-secondary btn-sm-sub hidden">
+              ↺ Chụp lại
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- MODAL 5: XEM ẢNH KHUÔN MẶT PHÓNG TO                 -->
+  <!-- ==================================================== -->
+  <div id="modal-photo-viewer" class="modal-overlay" onclick="closeModal('modal-photo-viewer')">
+    <div class="modal-box photo-viewer-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="photo-viewer-title" class="modal-title">Ảnh Chấm Công</h3>
+        <button class="modal-close" onclick="closeModal('modal-photo-viewer')">&times;</button>
+      </div>
+      <div class="photo-viewer-body">
+        <img id="photo-viewer-img" src="" alt="Ảnh chấm công" class="photo-full">
+        <div id="photo-viewer-details" class="photo-details"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/app.js?v=3"></script>
+</body>
+</html>
