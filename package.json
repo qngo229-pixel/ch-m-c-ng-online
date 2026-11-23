@@ -1,0 +1,12 @@
+{
+  "name": "chamcong-15-nguoi",
+  "version": "1.0.0",
+  "description": "Ung dung cham cong 15 nguoi gon nhe voi GPS, PIN ma hoa va quan tri",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["chamcong", "attendance", "gps", "sqlite"],
+  "author": "Antigravity",
+  "license": "MIT"
+}
