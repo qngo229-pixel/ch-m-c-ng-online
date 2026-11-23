@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Cơ sở dữ liệu chứa tọa độ GPS & số điện thoại thật của nhân viên
+# (Nên bỏ qua để bảo vệ quyền riêng tư nếu đưa lên GitHub Public)
+attendance.db
+attendance.db-wal
+attendance.db-shm
+
+# Ảnh chụp khuôn mặt của nhân viên
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Nhật ký và file tạm hệ thống
+*.log
+.DS_Store
+Thumbs.db
