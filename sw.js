@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chamcong-ghpages-v15';
+const CACHE_NAME = 'chamcong-ghpages-v21';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

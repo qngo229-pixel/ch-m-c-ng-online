@@ -1,22 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#1e293b" />
+    <linearGradient id="evnBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e4fc2" />
+      <stop offset="55%" stop-color="#153e90" />
+      <stop offset="100%" stop-color="#0b225d" />
     </linearGradient>
-    <linearGradient id="primary" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#10b981" />
-      <stop offset="100%" stop-color="#059669" />
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#10b981" flood-opacity="0.4"/>
+    <filter id="softShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#030b1f" flood-opacity="0.45"/>
     </filter>
   </defs>
-  <rect width="512" height="512" rx="128" fill="url(#bg)" />
-  <circle cx="256" cy="256" r="180" fill="url(#primary)" filter="url(#glow)" />
-  <!-- Map Pin & Checkmark -->
-  <path d="M256 120 C200 120 156 164 156 220 C156 295 256 380 256 380 C256 380 356 295 356 220 C356 164 312 120 256 120 Z" fill="#ffffff" />
-  <circle cx="256" cy="216" r="40" fill="#059669" />
-  <!-- Clock / Pulse ring -->
-  <circle cx="256" cy="256" r="210" fill="none" stroke="#34d399" stroke-width="8" stroke-dasharray="16 12" opacity="0.6" />
+
+  <!-- Deep EVN Royal Blue Background -->
+  <rect width="512" height="512" fill="url(#evnBg)" />
+  <!-- Subtle Outer Accent Glow Ring -->
+  <circle cx="256" cy="256" r="228" fill="none" stroke="rgba(125,211,252,0.22)" stroke-width="4" />
+
+  <!-- Top EVN Star Shield (cy=156, r=98) -->
+  <circle cx="256" cy="156" r="98" fill="#ffffff" filter="url(#softShadow)" />
+  <circle cx="256" cy="156" r="91" fill="#ffffff" stroke="#163a8c" stroke-width="6" />
+  <polygon points="256,69 272,140 343,156 272,172 256,243 240,172 169,156 240,140" fill="#163a8c" />
+  <polygon points="256,91 268,144 321,156 268,168 256,221 244,168 191,156 244,144" fill="#e61e25" />
+  <polygon points="256,120 264,148 292,156 264,164 256,192 248,164 220,156 248,148" fill="#ffea00" />
+
+  <!-- Sleek White Brand Pill: EVN (Navy) + NPC (Red Italic) -->
+  <rect x="86" y="274" width="340" height="72" rx="18" fill="#ffffff" filter="url(#softShadow)" />
+  <text x="253" y="330" text-anchor="middle" font-family="Arial Black, Segoe UI, Arial, sans-serif" font-size="60" font-weight="900">
+    <tspan fill="#163a8c" letter-spacing="1">EVN</tspan><tspan fill="#e61e25" font-style="italic" letter-spacing="1">NPC</tspan>
+  </text>
+
+  <!-- Crisp Bold Vietnamese Label: CHẤM CÔNG -->
+  <text x="256" y="405" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="900" fill="#ffea00" letter-spacing="1.5" filter="url(#softShadow)">CHẤM CÔNG</text>
 </svg>

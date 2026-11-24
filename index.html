@@ -3,28 +3,58 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Chấm Công GPS - Điểm Danh Thông Minh</title>
-  <meta name="description" content="Ứng dụng chấm công GPS & chụp ảnh mặt gọn nhẹ cho tối đa 30 nhân sự, hỗ trợ nghỉ phép và giải trình">
-  <meta name="theme-color" content="#10b981">
+  <title>EVNNPC - Chấm Công Kỹ Sư Điện Lực</title>
+  <meta name="description" content="Hệ thống chấm công GPS & xác thực khuôn mặt dành cho Kỹ sư Điện lực miền Bắc (EVNNPC)">
+  <meta name="theme-color" content="#153e90">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Chấm Công">
-  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
-  <link rel="icon" type="image/svg+xml" href="./icon.svg">
-  <link rel="manifest" href="./manifest.json?v=15">
-  <link rel="stylesheet" href="./styles.css?v=15">
+  <meta name="apple-mobile-web-app-title" content="Chấm Công EVN">
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=21">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=21">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg?v=21">
+  <link rel="manifest" href="./manifest.json?v=21">
+  <link rel="stylesheet" href="./styles.css?v=21">
 </head>
 <body>
 
+  <!-- Họa tiết cột điện cao thế & lưới điện mờ tinh tế ở nền -->
+  <div class="power-grid-watermark" aria-hidden="true">
+    <svg viewBox="0 0 320 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.22">
+        <!-- Cột điện cao thế -->
+        <path d="M160 22 L118 395 M160 22 L202 395" />
+        <path d="M62 108 L258 108 M160 72 L62 108 M160 72 L258 108" />
+        <path d="M40 190 L280 190 M144 148 L40 190 M176 148 L280 190" />
+        <path d="M74 268 L246 268 M136 226 L74 268 M184 226 L246 268" />
+        <!-- Giằng chéo kỹ thuật -->
+        <path d="M148 108 L184 190 M172 108 L136 190" />
+        <path d="M136 190 L192 268 M184 190 L128 268" />
+        <path d="M128 268 L200 355 M192 268 L120 355" />
+        <path d="M102 395 L218 395" />
+        <!-- Sứ cách điện & đường dây võng -->
+        <path d="M62 108 L62 126 M258 108 L258 126 M40 190 L40 208 M280 190 L280 208" />
+        <path d="M0 144 Q32 138 62 126 M258 126 Q290 138 320 144" stroke-dasharray="5 5" />
+        <path d="M0 228 Q20 222 40 208 M280 208 Q300 222 320 228" stroke-dasharray="5 5" />
+      </g>
+    </svg>
+  </div>
+
   <!-- APP HEADER -->
   <header class="app-header">
+    <div class="evn-tricolor-bar"></div>
     <div class="header-container">
       <div class="brand">
-        <div class="brand-icon">📍</div>
+        <div class="brand-icon evn-emblem-badge" title="Điện lực Việt Nam - EVNNPC">
+          <svg viewBox="0 0 100 100" class="evn-star-svg" aria-hidden="true">
+            <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#163a8c" stroke-width="5.5"/>
+            <polygon points="50,9 58,42 91,50 58,58 50,91 42,58 9,50 42,42" fill="#163a8c"/>
+            <polygon points="50,20 56,44 80,50 56,56 50,80 44,56 20,50 44,44" fill="#e61e25"/>
+            <polygon points="50,33 54,46 67,50 54,54 50,67 46,54 33,50 46,46" fill="#ffea00"/>
+          </svg>
+        </div>
         <div class="brand-text-wrap">
-          <span class="brand-title">CHẤM CÔNG GPS</span>
-          <span class="brand-subtitle">Điểm danh thông minh • GPS & Face</span>
+          <span class="brand-title"><span class="evn-word">EVN</span><span class="npc-word">NPC</span> <span class="brand-sep">•</span> CHẤM CÔNG</span>
+          <span class="brand-subtitle">Tổng Công ty Điện lực miền Bắc • Kỹ sư GPS &amp; Face</span>
         </div>
       </div>
 
@@ -62,11 +92,24 @@
     <!-- VIEW 1: MÀN HÌNH ĐĂNG NHẬP (PHONE + PIN 4-6 SỐ)     -->
     <!-- ==================================================== -->
     <div id="view-login" class="login-container hidden">
-      <div class="card">
+      <div class="card login-evn-card">
+        <div class="evn-tricolor-bar card-top-bar"></div>
         <div class="login-header">
-          <div class="login-hero-icon">🛡️</div>
-          <h2>Đăng Nhập Chấm Công</h2>
-          <p>Nhập số điện thoại & mã PIN để bắt đầu ca làm việc</p>
+          <div class="login-evn-hero">
+            <div class="login-evn-halo"></div>
+            <svg viewBox="0 0 100 100" class="login-evn-svg" aria-hidden="true">
+              <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#163a8c" stroke-width="5"/>
+              <polygon points="50,8 58,42 92,50 58,58 50,92 42,58 8,50 42,42" fill="#163a8c"/>
+              <polygon points="50,19 56,44 81,50 56,56 50,81 44,56 19,50 44,44" fill="#e61e25"/>
+              <polygon points="50,33 54,46 67,50 54,54 50,67 46,54 33,50 46,46" fill="#ffea00"/>
+            </svg>
+          </div>
+          <div class="login-evn-wordmark">
+            <span class="evn-word">EVN</span><span class="npc-word">NPC</span>
+          </div>
+          <div class="login-evn-org">TỔNG CÔNG TY ĐIỆN LỰC MIỀN BẮC</div>
+          <h2>Hệ Thống Chấm Công Kỹ Sư</h2>
+          <p>Nhập số điện thoại &amp; mã PIN để vào ca trực vận hành</p>
         </div>
 
         <div id="login-alert" class="alert alert-danger hidden"></div>
@@ -94,10 +137,18 @@
             <span>Máy nhớ đăng nhập 30 ngày</span>
           </label>
 
-          <button type="submit" id="btn-submit-login" class="btn-primary">
-            <span>ĐĂNG NHẬP</span> ➔
+          <button type="submit" id="btn-submit-login" class="btn-primary btn-evn-primary">
+            <span>⚡ ĐĂNG NHẬP VÀO CA</span> ➔
           </button>
         </form>
+
+        <div class="scada-telemetry-strip">
+          <span><i class="scada-live-dot"></i> GRID ONLINE</span>
+          <span>•</span>
+          <span>🛰️ GPS REALTIME</span>
+          <span>•</span>
+          <span>🔒 PBKDF2</span>
+        </div>
       </div>
 
       <!-- Gợi ý cài ra màn hình điện thoại (tự ẩn khi đã cài thành app) -->
@@ -134,6 +185,10 @@
       <!-- SUB-TAB 2A: CHẤM CÔNG -->
       <div id="emp-tab-punch">
         <div class="clock-card">
+          <div class="scada-clock-bar">
+            <span class="scada-clock-label"><i class="scada-live-dot"></i> TRẠM ĐIỂM DANH KỸ SƯ ĐIỆN LỰC</span>
+            <span class="scada-freq-pill">⚡ 50.0 Hz</span>
+          </div>
           <div id="live-time" class="live-time">00:00:00</div>
           <div id="live-date" class="live-date">Đang tải ngày...</div>
           <div class="status-badge-container">
@@ -145,8 +200,8 @@
 
         <!-- KHU VỰC CHỌN CHẾ ĐỘ CA & NÚT CHẤM CÔNG DUY NHẤT -->
         <div class="punch-area">
-          <!-- Chọn loại công: Ca thường / Tăng ca / Trực lễ -->
-          <div id="shift-mode-selector" class="shift-mode-selector">
+          <!-- Chọn loại công: Ca thường / Tăng ca / Trực lễ / Trực CRM -->
+          <div id="shift-mode-selector" class="shift-mode-selector shift-mode-4">
             <button type="button" class="shift-pill active" data-mode="normal" onclick="selectShiftMode('normal')">
               🏢 Ca thường
             </button>
@@ -154,22 +209,28 @@
               ⚡ Tăng ca
             </button>
             <button type="button" class="shift-pill" data-mode="holiday" onclick="selectShiftMode('holiday')">
-              🎌 Trực lễ
+              <svg viewBox="0 0 36 24" class="vn-flag-svg vn-flag-sm" aria-hidden="true"><rect width="36" height="24" rx="3" fill="#da251d"/><path d="M0 0 H36 V10 Q27 14 18 10 Q9 6 0 10 Z" fill="rgba(255,255,255,0.14)"/><polygon points="18,4.5 19.8,10 25.6,10 20.9,13.4 22.7,18.9 18,15.5 13.3,18.9 15.1,13.4 10.4,10 16.2,10" fill="#ffea00"/></svg>
+              <span>Trực lễ</span>
+            </button>
+            <button type="button" class="shift-pill" data-mode="crm" onclick="selectShiftMode('crm')">
+              <svg viewBox="0 0 48 48" class="eng-icon-svg eng-icon-sm" aria-hidden="true"><path d="M9 44 C9 34 15 30 24 30 C33 30 39 34 39 44 Z" fill="#1d4ed8"/><rect x="15" y="34" width="3" height="10" rx="1" fill="#fde047"/><rect x="30" y="34" width="3" height="10" rx="1" fill="#fde047"/><circle cx="24" cy="23" r="7.5" fill="#fde6c4"/><path d="M13 20 C13 11 18 7 24 7 C30 7 35 11 35 20 Z" fill="#f59e0b"/><rect x="10.5" y="18.5" width="27" height="3.2" rx="1.6" fill="#fbbf24"/><polygon points="25.2,9.5 21.2,14.5 24,14.5 22.8,18.2 27,13.2 24.2,13.2" fill="#163a8c"/></svg>
+              <span>Trực CRM</span>
             </button>
           </div>
 
           <div id="punch-btn-wrapper" class="punch-btn-wrapper">
+            <div class="grid-reticle-ring"></div>
             <div class="pulse-ring"></div>
             <button id="btn-punch" class="punch-btn btn-in" title="Bấm để chấm công">
               <div id="punch-icon" class="punch-icon">☀️</div>
               <div id="punch-text" class="punch-text">VÀO CA</div>
-              <div id="punch-subtext" class="punch-subtext">Ca thường • Chụp mặt & GPS</div>
+              <div id="punch-subtext" class="punch-subtext">Ca thường • Chụp mặt &amp; GPS</div>
             </button>
           </div>
 
           <div id="gps-status-hint" class="punch-hint">
-            <a id="office-map-pill" href="https://www.google.com/maps?q=18.78474399853969,105.33180761722444" target="_blank" class="office-pill" title="Xem vị trí công ty trên Google Maps">
-              🏢 Vị trí công ty (Bán kính <span id="office-radius-label">200m</span>)
+            <a id="office-map-pill" href="https://www.google.com/maps?q=18.78474399853969,105.33180761722444" target="_blank" class="office-pill" title="Xem vị trí đơn vị Điện lực trên Google Maps">
+              ⚡ Điểm chấm công Điện lực (Bán kính <span id="office-radius-label">200m</span>)
             </a>
             <div class="punch-hint-links">
               <a href="javascript:void(0)" onclick="openGpsModal()" style="color: #60a5fa; text-decoration: underline;">Hướng dẫn GPS</a>
@@ -203,6 +264,10 @@
           <div class="result-row">
             <span class="result-label">Sai số vị trí:</span>
             <span id="res-acc" class="result-value">± 0m</span>
+          </div>
+          <div class="result-row hidden" id="res-sync-row">
+            <span class="result-label">Lưu ảnh:</span>
+            <span id="res-sync-status" class="result-value sync-status-pending">☁️ Đang đồng bộ lên Google Drive...</span>
           </div>
           <div style="margin-top: 6px; text-align: right;">
             <a id="res-map-link" href="#" target="_blank" class="btn-map">
@@ -307,13 +372,22 @@
     <!-- ==================================================== -->
     <div id="view-admin" class="admin-container hidden">
 
+      <!-- Thông báo chế độ Chỉ xem dành riêng cho Tổ trưởng -->
+      <div id="leader-readonly-banner" class="leader-banner hidden">
+        <span>👁️</span>
+        <span><b>Chế độ Tổ trưởng (Chỉ xem):</b> Bạn có thể xem số lượng chấm công, ảnh chụp & đơn xin nghỉ — không thể chấm bù, duyệt đơn hoặc xóa dữ liệu.</span>
+      </div>
+
       <!-- Admin Tabs Navigation -->
       <div class="admin-tabs">
         <button id="tab-btn-history" class="tab-btn active" onclick="switchAdminTab('history')">
-          📊 Lịch sử chấm công
+          📊 Lịch sử công
+        </button>
+        <button id="tab-btn-summary" class="tab-btn" onclick="switchAdminTab('summary')">
+          📈 Tổng hợp tháng
         </button>
         <button id="tab-btn-requests" class="tab-btn" onclick="switchAdminTab('requests')">
-          📝 Duyệt đơn
+          <span id="tab-btn-requests-label">📝 Duyệt đơn</span>
           <span id="admin-pending-badge" class="nav-badge hidden">0</span>
         </button>
         <button id="tab-btn-staff" class="tab-btn" onclick="switchAdminTab('staff')">
@@ -336,10 +410,20 @@
           <span id="stat-in-shift" class="stat-num text-success">0</span>
           <span class="stat-sub">Đã bấm Vào ca</span>
         </div>
-        <div class="stat-card">
+        <div class="stat-card stat-today-split">
           <span class="stat-title">CHẤM CÔNG HÔM NAY</span>
-          <span id="stat-today-punches" class="stat-num">0</span>
-          <span class="stat-sub">Tổng lượt Vào & Ra</span>
+          <div class="stat-split-row">
+            <div class="stat-split-item">
+              <span class="stat-split-label text-success">🟢 Vào ca</span>
+              <span id="stat-today-in" class="stat-split-num text-success">0</span>
+            </div>
+            <div class="stat-split-divider"></div>
+            <div class="stat-split-item">
+              <span class="stat-split-label text-danger">🔴 Ra ca</span>
+              <span id="stat-today-out" class="stat-split-num text-danger">0</span>
+            </div>
+          </div>
+          <span id="stat-today-punches" class="stat-sub">Tổng: 0 lượt hôm nay</span>
         </div>
         <div class="stat-card stat-amber clickable" onclick="switchAdminTab('requests')" title="Bấm để xem đơn chờ duyệt">
           <span class="stat-title">ĐƠN CHỜ DUYỆT</span>
@@ -355,13 +439,16 @@
 
       <!-- TAB 1: TOÀN BỘ LỊCH SỬ CHẤM CÔNG & KHOẢNG CÁCH CÔNG TY -->
       <div id="admin-tab-history">
-        <!-- Thanh vị trí công ty chuẩn -->
+        <!-- Thanh vị trí đơn vị điện lực & giờ chuẩn -->
         <div class="office-config-bar">
-          <div>
-            <strong>🏢 Điểm chấm công công ty:</strong>
-            <a href="https://www.google.com/maps?q=18.78474399853969,105.33180761722444" target="_blank" style="color: #7dd3fc; text-decoration: underline; margin-left: 4px;">
-              18.78474, 105.33181 (Mở Google Maps ↗)
-            </a>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div>
+              <strong>⚡ Điểm chấm công đơn vị Điện lực:</strong>
+              <a href="https://www.google.com/maps?q=18.78474399853969,105.33180761722444" target="_blank" style="color: #7dd3fc; text-decoration: underline; margin-left: 4px;">
+                18.78474, 105.33181 (Maps ↗)
+              </a>
+            </div>
+            <span class="badge badge-schedule" title="Áp dụng tính Đi muộn / Về sớm cho Ca thường">⏰ Ca chuẩn: 07:30 – 18:30</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <a id="drive-storage-badge" href="https://drive.google.com/drive/folders/1q4SCCSwJK7oaLsYKnsJX6NQjoZ2VTJzL" target="_blank" class="badge badge-explain" style="text-decoration: none;" title="Bấm để mở thư mục ảnh trên Google Drive">🔥 Lưu ảnh: Firebase</a>
@@ -372,10 +459,18 @@
               <option value="300">300 mét</option>
               <option value="500">500 mét</option>
             </select>
-            <button type="button" class="btn-sm btn-pin" onclick="openCleanupModal()" title="Dọn ảnh cũ hoặc xóa dữ liệu chấm công để tiết kiệm bộ nhớ Firebase">
+            <button id="btn-admin-cleanup" type="button" class="btn-sm btn-pin" onclick="openCleanupModal()" title="Dọn ảnh cũ hoặc xóa dữ liệu chấm công để tiết kiệm bộ nhớ Firebase">
               🧹 Dọn dữ liệu / ảnh
             </button>
           </div>
+        </div>
+
+        <!-- Cảnh báo tự động nhân viên quên chấm Ra ca (chỉ hiện khi có) -->
+        <div id="forgot-checkout-panel" class="forgot-panel hidden">
+          <div class="forgot-panel-header">
+            <span id="forgot-checkout-title">⚠️ Cảnh báo quên chấm Ra ca</span>
+          </div>
+          <div id="forgot-checkout-list" class="forgot-list"></div>
         </div>
 
         <div class="filter-bar">
@@ -398,15 +493,16 @@
             <option value="all">🏷️ Tất cả chế độ ca</option>
             <option value="normal">🏢 Chỉ Ca thường</option>
             <option value="overtime">⚡ Chỉ Tăng ca</option>
-            <option value="holiday">🎌 Chỉ Trực lễ</option>
+            <option value="holiday">★ Chỉ Trực lễ</option>
+            <option value="crm">👷 Chỉ Trực CRM</option>
           </select>
 
-          <button type="button" class="btn-primary" style="width: auto; padding: 8px 13px; font-size: 0.84rem;" onclick="openAdminPunchModal()">
+          <button id="btn-admin-manual-punch" type="button" class="btn-primary" style="width: auto; padding: 8px 13px; font-size: 0.84rem;" onclick="openAdminPunchModal()">
             ✍️ Chấm bù
           </button>
 
-          <button id="btn-toggle-gallery" class="btn-secondary" title="Chuyển giữa dạng bảng và thư viện ảnh">
-            🖼️ Lưới ảnh
+          <button id="btn-toggle-gallery" class="btn-secondary" title="Chuyển giữa dạng bảng và mục Ảnh">
+            🖼️ Ảnh
           </button>
 
           <button id="btn-admin-refresh" class="btn-secondary">
@@ -427,7 +523,7 @@
                 <th>Nhân Viên</th>
                 <th>Loại Ca</th>
                 <th>Khoảng Cách & GPS</th>
-                <th>Bản Đồ / Xóa</th>
+                <th id="th-history-action">Bản Đồ / Xóa</th>
               </tr>
             </thead>
             <tbody id="admin-history-tbody">
@@ -481,6 +577,66 @@
         </div>
       </div>
 
+      <!-- TAB 4: BẢNG CÔNG TỔNG HỢP THÁNG (CHỐT LƯƠNG & XUẤT EXCEL) -->
+      <div id="admin-tab-summary" class="hidden">
+        <div class="filter-bar">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="summary-month-input" style="font-size: 0.84rem; color: var(--text-muted); font-weight: 600;">📅 Chọn tháng:</label>
+            <input type="month" id="summary-month-input" class="filter-select" style="min-width: 155px;">
+          </div>
+
+          <button id="btn-summary-refresh" class="btn-secondary">
+            🔄 Cập nhật số liệu
+          </button>
+
+          <button id="btn-export-summary-csv" class="btn-success" style="margin-left: auto;">
+            📥 Xuất Excel Tổng Hợp Tháng
+          </button>
+        </div>
+
+        <div class="summary-mini-grid">
+          <div class="summary-mini-card">
+            <span>Ngày công thường</span>
+            <strong id="sum-total-normal" class="text-success">0</strong>
+          </div>
+          <div class="summary-mini-card">
+            <span>Ngày trực CRM</span>
+            <strong id="sum-total-crm" style="color: #38bdf8;">0</strong>
+          </div>
+          <div class="summary-mini-card">
+            <span>Ca Tăng ca / Trực lễ</span>
+            <strong id="sum-total-ot-hol" class="text-amber">0 / 0</strong>
+          </div>
+          <div class="summary-mini-card">
+            <span>Muộn / Sớm / Quên Ra</span>
+            <strong id="sum-total-alerts" class="text-danger">0 / 0 / 0</strong>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Nhân Viên</th>
+                <th>Công Thường</th>
+                <th>Trực CRM</th>
+                <th>Tăng Ca</th>
+                <th>Trực Lễ</th>
+                <th>Nghỉ Phép</th>
+                <th>Muộn / Sớm / Quên Ra</th>
+              </tr>
+            </thead>
+            <tbody id="admin-summary-tbody">
+              <tr>
+                <td colspan="7" class="text-center" style="padding: 24px; color: var(--text-dim);">
+                  Đang tính toán bảng công tổng hợp tháng...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- TAB 3: QUẢN LÝ NHÂN VIÊN (TỐI ĐA 30 NGƯỜI), ĐỔI PIN, KHÓA -->
       <div id="admin-tab-staff" class="hidden">
         <div class="section-header">
@@ -509,6 +665,10 @@
       </div>
 
     </div>
+
+    <footer class="evn-footer">
+      <span>⚡ <b>EVNNPC</b> — Hệ thống Chấm Công GPS &amp; Xác Thực Khuôn Mặt Kỹ Sư Điện Lực</span>
+    </footer>
 
   </main>
 
@@ -542,8 +702,9 @@
         <div class="form-group">
           <label class="form-label">Vai trò</label>
           <select id="add-user-role" class="form-input no-icon">
-            <option value="employee">Nhân viên thông thường</option>
-            <option value="admin">Quản lý (Admin)</option>
+            <option value="employee">👤 Nhân viên thông thường</option>
+            <option value="leader">👁️ Tổ trưởng (Chỉ xem công, ảnh & đơn)</option>
+            <option value="admin">👑 Quản lý (Admin toàn quyền)</option>
           </select>
         </div>
 
@@ -662,6 +823,7 @@
 
       <div class="camera-body">
         <p class="camera-instruction">Vui lòng nhìn thẳng vào camera để xác thực khuôn mặt</p>
+        <div id="camera-gps-pill" class="camera-gps-pill gps-loading">🛰️ Đang khóa trước vị trí GPS...</div>
 
         <div class="camera-viewport">
           <video id="camera-video" autoplay playsinline muted></video>
@@ -672,6 +834,17 @@
           </div>
           <canvas id="camera-canvas" class="hidden"></canvas>
           <img id="camera-preview-img" class="camera-preview hidden" alt="Ảnh chụp">
+        </div>
+
+        <!-- Ô ghi chú công việc nhanh (Tăng ca / Trực lễ / Trực CRM / Hiện trường) -->
+        <div class="camera-note-wrap">
+          <input type="text" id="camera-work-note" class="form-input no-icon camera-note-input" maxlength="140" placeholder="💬 Ghi chú công việc (không bắt buộc, VD: Xử lý sự cố lộ 371...)">
+          <div class="note-chips-row">
+            <button type="button" class="note-chip" onclick="setQuickWorkNote('Trực CRM cả ngày')">👷 Trực CRM cả ngày</button>
+            <button type="button" class="note-chip" onclick="setQuickWorkNote('Xử lý sự cố lưới điện')">⚡ Xử lý sự cố</button>
+            <button type="button" class="note-chip" onclick="setQuickWorkNote('Công tác TBA / Hiện trường')">🏗️ Công tác TBA</button>
+            <button type="button" class="note-chip" onclick="setQuickWorkNote('Kiểm tra đường dây')">🔌 Kiểm tra tuyến</button>
+          </div>
         </div>
 
         <div class="camera-actions">
@@ -798,7 +971,8 @@
             <select id="manual-shift-mode" class="form-input no-icon">
               <option value="normal">🏢 Ca thường</option>
               <option value="overtime">⚡ Tăng ca</option>
-              <option value="holiday">🎌 Trực lễ</option>
+              <option value="holiday">★ Trực lễ</option>
+              <option value="crm">👷 Trực CRM (cả ngày)</option>
             </select>
           </div>
         </div>
@@ -931,7 +1105,7 @@
   <!-- TOAST CONTAINER -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="./firebase-config.js?v=15"></script>
-  <script type="module" src="./app.js?v=15"></script>
+  <script src="./firebase-config.js?v=21"></script>
+  <script type="module" src="./app.js?v=21"></script>
 </body>
 </html>

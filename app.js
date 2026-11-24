@@ -210,11 +210,15 @@ async function uploadPhotoToDrive(dataUrl, { userName, dateKey, timeTag, actionT
   const monthKey = (dateKey || getVnDateKey()).slice(0, 7); // YYYY-MM
   const filename = `${dateKey}_${timeTag}_${safeUser}_${typeTag}.jpg`;
 
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 16000) : null;
+
   try {
     // Dùng text/plain để tránh CORS preflight OPTIONS trên Google Apps Script
     const res = await fetch(cfg.scriptUrl.trim(), {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         action: 'upload',
         secret: cfg.secret || '',
@@ -232,6 +236,8 @@ async function uploadPhotoToDrive(dataUrl, { userName, dateKey, timeTag, actionT
   } catch (err) {
     console.warn('Google Drive upload fallback to Firebase:', err.message);
     return null;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -447,6 +453,32 @@ const DB = {
       photos[record.id] = fullPhotoDataUrl;
       const keys = Object.keys(photos);
       if (keys.length > 40) delete photos[keys[0]];
+      writeLocal(LOCAL_KEYS.photos, photos);
+    }
+  },
+
+  async updateAttendancePhoto(attId, fields, fallbackFullPhoto = null, userId = '', timestamp = Date.now()) {
+    if (!attId) return;
+    if (dbMode === 'firebase') {
+      await fsApi.updateDoc(fsApi.doc(fsDb, 'attendance', attId), fields);
+      if (fallbackFullPhoto) {
+        await fsApi.setDoc(fsApi.doc(fsDb, 'attendance_photos', attId), {
+          photo: fallbackFullPhoto,
+          user_id: userId,
+          timestamp
+        });
+      }
+      return;
+    }
+    const allAtt = readLocal(LOCAL_KEYS.attendance, []);
+    const idx = allAtt.findIndex(a => a.id === attId);
+    if (idx !== -1) {
+      allAtt[idx] = { ...allAtt[idx], ...fields };
+      writeLocal(LOCAL_KEYS.attendance, allAtt);
+    }
+    if (fallbackFullPhoto) {
+      const photos = readLocal(LOCAL_KEYS.photos, {});
+      photos[attId] = fallbackFullPhoto;
       writeLocal(LOCAL_KEYS.photos, photos);
     }
   },
@@ -753,6 +785,24 @@ async function ensureDefaultAdmin() {
         lock_until: null,
         created_at: Date.now()
       });
+
+      // Chỉ tạo thêm tài khoản Tổ trưởng mẫu ở chế độ Local (?mode=local) để test nhanh
+      if (dbMode === 'local') {
+        const lSalt = createSalt();
+        const lHash = await hashPin('123456', lSalt);
+        await DB.saveUser({
+          id: '0900000001',
+          name: 'Tổ trưởng (Thử nghiệm)',
+          phone: '0900000001',
+          pin_hash: lHash,
+          pin_salt: lSalt,
+          role: 'leader',
+          is_locked: 0,
+          failed_attempts: 0,
+          lock_until: null,
+          created_at: Date.now() + 1
+        });
+      }
     }
   } catch (err) {
     console.error('Lỗi kết nối/khởi tạo Firestore:', err);
@@ -791,16 +841,125 @@ const state = {
   myRequestsCache: []
 };
 
+function isAdmin() {
+  return Boolean(state.user && state.user.role === 'admin');
+}
+
+function isLeader() {
+  return Boolean(state.user && state.user.role === 'leader');
+}
+
+function canViewDashboard() {
+  return isAdmin() || isLeader();
+}
+
+function getRoleLabel(role) {
+  if (role === 'admin') return 'Quản lý';
+  if (role === 'leader') return 'Tổ trưởng (Chỉ xem)';
+  return 'Nhân viên';
+}
+
+function applyDashboardRoleUI() {
+  const adminOnly = isAdmin();
+  const leaderOnly = isLeader();
+
+  const banner = document.getElementById('leader-readonly-banner');
+  if (banner) banner.classList.toggle('hidden', !leaderOnly);
+
+  const tabStaff = document.getElementById('tab-btn-staff');
+  if (tabStaff) tabStaff.classList.toggle('hidden', !adminOnly);
+
+  const reqLabel = document.getElementById('tab-btn-requests-label');
+  if (reqLabel) reqLabel.textContent = adminOnly ? '📝 Duyệt đơn' : '📝 Xem đơn nghỉ';
+
+  const cleanupBtn = document.getElementById('btn-admin-cleanup');
+  if (cleanupBtn) cleanupBtn.classList.toggle('hidden', !adminOnly);
+
+  const manualPunchBtn = document.getElementById('btn-admin-manual-punch');
+  if (manualPunchBtn) manualPunchBtn.classList.toggle('hidden', !adminOnly);
+
+  const radiusSel = document.getElementById('admin-radius-select');
+  if (radiusSel) radiusSel.disabled = !adminOnly;
+
+  const thAction = document.getElementById('th-history-action');
+  if (thAction) thAction.textContent = adminOnly ? 'Bản Đồ / Xóa' : 'Bản Đồ';
+}
+
+const WORK_SCHEDULE = {
+  inHour: 7,
+  inMinute: 30,
+  outHour: 18,
+  outMinute: 30
+};
+
 function getShiftModeLabel(mode) {
   if (mode === 'overtime') return 'Tăng ca';
   if (mode === 'holiday') return 'Trực lễ';
+  if (mode === 'crm') return 'Trực CRM';
   return 'Ca thường';
+}
+
+function renderVnFlagSvg(sizeClass = 'vn-flag-sm') {
+  return `<svg viewBox="0 0 36 24" class="vn-flag-svg ${sizeClass}" aria-hidden="true"><rect width="36" height="24" rx="3" fill="#da251d"/><path d="M0 0 H36 V10 Q27 14 18 10 Q9 6 0 10 Z" fill="rgba(255,255,255,0.14)"/><polygon points="18,4.5 19.8,10 25.6,10 20.9,13.4 22.7,18.9 18,15.5 13.3,18.9 15.1,13.4 10.4,10 16.2,10" fill="#ffea00"/></svg>`;
+}
+
+function renderEngineerSvg(sizeClass = 'eng-icon-sm') {
+  return `<svg viewBox="0 0 48 48" class="eng-icon-svg ${sizeClass}" aria-hidden="true"><path d="M9 44 C9 34 15 30 24 30 C33 30 39 34 39 44 Z" fill="#1d4ed8"/><rect x="15" y="34" width="3" height="10" rx="1" fill="#fde047"/><rect x="30" y="34" width="3" height="10" rx="1" fill="#fde047"/><circle cx="24" cy="23" r="7.5" fill="#fde6c4"/><path d="M13 20 C13 11 18 7 24 7 C30 7 35 11 35 20 Z" fill="#f59e0b"/><rect x="10.5" y="18.5" width="27" height="3.2" rx="1.6" fill="#fbbf24"/><polygon points="25.2,9.5 21.2,14.5 24,14.5 22.8,18.2 27,13.2 24.2,13.2" fill="#163a8c"/></svg>`;
 }
 
 function renderShiftModeBadge(mode) {
   if (mode === 'overtime') return '<span class="badge badge-overtime">⚡ Tăng ca</span>';
-  if (mode === 'holiday') return '<span class="badge badge-holiday">🎌 Trực lễ</span>';
+  if (mode === 'holiday') return `<span class="badge badge-holiday">${renderVnFlagSvg('vn-flag-sm')} Trực lễ</span>`;
+  if (mode === 'crm') return `<span class="badge badge-crm">${renderEngineerSvg('eng-icon-sm')} Trực CRM</span>`;
   return '';
+}
+
+function getVnMinutesOfDay(timestamp) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(new Date(timestamp));
+  const h = Number((parts.find(p => p.type === 'hour') || {}).value || 0);
+  const m = Number((parts.find(p => p.type === 'minute') || {}).value || 0);
+  return (h === 24 ? 0 : h) * 60 + m;
+}
+
+function formatMinutesShort(mins) {
+  const m = Math.max(0, Math.round(mins));
+  if (m >= 60) {
+    const hh = Math.floor(m / 60);
+    const mm = m % 60;
+    return mm > 0 ? `${hh}h${String(mm).padStart(2, '0')}p` : `${hh}h`;
+  }
+  return `${m}p`;
+}
+
+function getPunctualityInfo(r) {
+  // Chỉ áp dụng Đi muộn (> 07:30) & Về sớm (< 18:30) cho Ca thường (normal)
+  if (!r || (r.shift_mode && r.shift_mode !== 'normal') || !r.timestamp) return null;
+  const mins = getVnMinutesOfDay(r.timestamp);
+  const stdIn = WORK_SCHEDULE.inHour * 60 + WORK_SCHEDULE.inMinute;   // 07:30
+  const stdOut = WORK_SCHEDULE.outHour * 60 + WORK_SCHEDULE.outMinute; // 18:30
+  if (r.type === 'IN' && mins > stdIn) {
+    const diff = mins - stdIn;
+    return { kind: 'late', minutes: diff, label: `Muộn ${formatMinutesShort(diff)}` };
+  }
+  if (r.type === 'OUT' && mins < stdOut) {
+    const diff = stdOut - mins;
+    return { kind: 'early', minutes: diff, label: `Về sớm ${formatMinutesShort(diff)}` };
+  }
+  return null;
+}
+
+function renderPunctualityBadge(r) {
+  const info = getPunctualityInfo(r);
+  if (!info) return '';
+  if (info.kind === 'late') {
+    return `<span class="badge badge-late" title="Giờ vào chuẩn: 07:30">⏰ ${info.label}</span>`;
+  }
+  return `<span class="badge badge-early" title="Giờ ra chuẩn: 18:30">⚠️ ${info.label}</span>`;
 }
 
 function renderManualBadge(r) {
@@ -1032,7 +1191,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     }
   } finally {
     submitBtn.disabled = false;
-    submitBtn.innerHTML = '<span>ĐĂNG NHẬP</span> ➔';
+    submitBtn.innerHTML = '<span>⚡ ĐĂNG NHẬP VÀO CA</span> ➔';
   }
 });
 
@@ -1102,15 +1261,17 @@ async function renderAppForUser() {
   document.getElementById('header-user').classList.remove('hidden');
 
   document.getElementById('header-user-name').textContent = state.user.name;
-  document.getElementById('header-user-role').textContent = `${state.user.role === 'admin' ? 'Quản lý' : 'Nhân viên'} • ${state.user.phone}`;
+  document.getElementById('header-user-role').textContent = `${getRoleLabel(state.user.role)} • ${state.user.phone}`;
 
   const adminBtn = document.getElementById('btn-toggle-admin-view');
-  if (state.user.role === 'admin') {
+  if (canViewDashboard()) {
     adminBtn.classList.remove('hidden');
     adminBtn.onclick = toggleAdminView;
   } else {
     adminBtn.classList.add('hidden');
   }
+
+  applyDashboardRoleUI();
 
   // Đặt sẵn ngày hôm nay cho form Nghỉ phép / Giải trình
   const today = getVnDateKey();
@@ -1118,15 +1279,25 @@ async function renderAppForUser() {
   document.getElementById('req-to-date').value = today;
   document.getElementById('req-explain-date').value = today;
 
-  showAttendanceView();
   switchEmployeeTab('punch');
   prewarmGPS();
 
-  await Promise.all([
-    syncUserStatus(),
-    loadMyHistory(),
-    loadMyRequests()
-  ]);
+  if (isLeader()) {
+    switchAdminTab('history');
+    await Promise.all([
+      showAdminView(),
+      syncUserStatus(),
+      loadMyHistory(),
+      loadMyRequests()
+    ]);
+  } else {
+    showAttendanceView();
+    await Promise.all([
+      syncUserStatus(),
+      loadMyHistory(),
+      loadMyRequests()
+    ]);
+  }
 }
 
 async function syncUserStatus() {
@@ -1147,7 +1318,7 @@ function selectShiftMode(mode) {
     showToast('Bạn đang trong ca hiện tại — hãy bấm Ra ca trước khi đổi chế độ ca mới.', 'info');
     return;
   }
-  state.selectedShiftMode = ['normal', 'overtime', 'holiday'].includes(mode) ? mode : 'normal';
+  state.selectedShiftMode = ['normal', 'overtime', 'holiday', 'crm'].includes(mode) ? mode : 'normal';
   updatePunchButtonUI();
 }
 
@@ -1165,7 +1336,7 @@ function updatePunchButtonUI() {
     : state.selectedShiftMode;
   const modeLabel = getShiftModeLabel(activeMode);
 
-  // Cập nhật 3 nút chọn chế độ ca (khóa khi đang ở trong ca để tránh bấm nhầm)
+  // Cập nhật 4 nút chọn chế độ ca (khóa khi đang ở trong ca để tránh bấm nhầm)
   document.querySelectorAll('#shift-mode-selector .shift-pill').forEach(pill => {
     const pMode = pill.dataset.mode;
     pill.classList.toggle('active', pMode === activeMode);
@@ -1174,13 +1345,14 @@ function updatePunchButtonUI() {
 
   btn.classList.remove('loading');
   if (wrapper) {
-    wrapper.classList.remove('mode-out', 'mode-overtime-ring', 'mode-holiday-ring');
+    wrapper.classList.remove('mode-out', 'mode-overtime-ring', 'mode-holiday-ring', 'mode-crm-ring');
   }
 
   if (!isOut) {
     let btnClass = 'punch-btn btn-in';
     let btnIcon = '☀️';
     let btnLabel = 'VÀO CA';
+    let subLabel = `${modeLabel} • Chụp mặt & GPS`;
 
     if (activeMode === 'overtime') {
       btnClass += ' mode-overtime';
@@ -1190,14 +1362,26 @@ function updatePunchButtonUI() {
     } else if (activeMode === 'holiday') {
       btnClass += ' mode-holiday';
       if (wrapper) wrapper.classList.add('mode-holiday-ring');
-      btnIcon = '🎌';
+      btnIcon = 'VN_FLAG';
       btnLabel = 'VÀO TRỰC LỄ';
+    } else if (activeMode === 'crm') {
+      btnClass += ' mode-crm';
+      if (wrapper) wrapper.classList.add('mode-crm-ring');
+      btnIcon = 'ENGINEER';
+      btnLabel = 'VÀO TRỰC CRM';
+      subLabel = 'Trực CRM cả ngày • Ảnh & GPS';
     }
 
     btn.className = btnClass;
-    icon.textContent = btnIcon;
+    if (btnIcon === 'VN_FLAG') {
+      icon.innerHTML = renderVnFlagSvg('vn-flag-lg');
+    } else if (btnIcon === 'ENGINEER') {
+      icon.innerHTML = renderEngineerSvg('eng-icon-lg');
+    } else {
+      icon.textContent = btnIcon;
+    }
     text.textContent = btnLabel;
-    subtext.textContent = `${modeLabel} • Chụp mặt & GPS`;
+    subtext.textContent = subLabel;
 
     statusChip.className = 'status-chip out-shift';
     if (state.lastAttendance && state.lastAttendance.type === 'OUT') {
@@ -1210,13 +1394,21 @@ function updatePunchButtonUI() {
     btn.className = 'punch-btn btn-out';
     if (wrapper) wrapper.classList.add('mode-out');
     icon.textContent = '🌙';
-    text.textContent = activeMode === 'overtime' ? 'RA TĂNG CA' : (activeMode === 'holiday' ? 'RA TRỰC LỄ' : 'RA CA');
-    subtext.textContent = `${modeLabel} • Chụp mặt & GPS`;
+    text.textContent = activeMode === 'overtime'
+      ? 'RA TĂNG CA'
+      : (activeMode === 'holiday' ? 'RA TRỰC LỄ' : (activeMode === 'crm' ? 'RA TRỰC CRM' : 'RA CA'));
+    subtext.textContent = activeMode === 'crm' ? 'Kết thúc Trực CRM • Ảnh & GPS' : `${modeLabel} • Chụp mặt & GPS`;
 
     statusChip.className = 'status-chip in-shift';
     const inTime = state.lastAttendance ? state.lastAttendance.datetime_str : '';
-    const modePrefix = activeMode === 'overtime' ? '⚡ Đang TĂNG CA' : (activeMode === 'holiday' ? '🎌 Đang TRỰC LỄ' : '🟢 Đang trong ca làm việc');
-    statusChip.textContent = `${modePrefix} (Vào lúc ${inTime})`;
+    if (activeMode === 'holiday') {
+      statusChip.innerHTML = `${renderVnFlagSvg('vn-flag-sm')} <span>Đang TRỰC LỄ (Vào lúc ${escapeHtml(inTime)})</span>`;
+    } else if (activeMode === 'crm') {
+      statusChip.innerHTML = `${renderEngineerSvg('eng-icon-sm')} <span>Đang TRỰC CRM cả ngày (Vào lúc ${escapeHtml(inTime)})</span>`;
+    } else {
+      const modePrefix = activeMode === 'overtime' ? '⚡ Đang TĂNG CA' : '🟢 Đang trong ca làm việc';
+      statusChip.textContent = `${modePrefix} (Vào lúc ${inTime})`;
+    }
   }
 }
 
@@ -1241,10 +1433,100 @@ function switchEmployeeTab(tab) {
 }
 
 // ==========================================
-// 7. GPS TỐI ƯU DI ĐỘNG + KHOẢNG CÁCH CÔNG TY + CAMERA CHỤP MẶT
+// 7. GPS SIÊU TỐC (SONG SONG VỆ TINH + 4G/5G + KHÓA TRƯỚC KHI MỞ CAMERA) & ĐẨY ẢNH NỀN
 // ==========================================
-function getOptimizedMobileGPS(onProgress) {
-  return new Promise((resolve, reject) => {
+const gpsState = {
+  cachedCoords: null,
+  cachedAt: 0,
+  activePromise: null,
+  lastWarmupAt: 0
+};
+
+const pendingLocalPhotos = new Map();
+let pendingDriveUploads = 0;
+
+window.addEventListener('beforeunload', (e) => {
+  if (pendingDriveUploads > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+function warmupDriveScript() {
+  if (!isDriveConfigured()) return;
+  const now = Date.now();
+  if (now - gpsState.lastWarmupAt < 90000) return; // Đánh thức tối đa 1 lần / 90 giây
+  gpsState.lastWarmupAt = now;
+  try {
+    fetch(window.DRIVE_UPLOAD_CONFIG.scriptUrl.trim(), {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store'
+    }).catch(() => {});
+  } catch {}
+}
+
+function cacheGpsCoords(coords) {
+  if (!coords || typeof coords.latitude !== 'number' || typeof coords.longitude !== 'number') return;
+  const now = Date.now();
+  const prevAcc = gpsState.cachedCoords ? (Number(gpsState.cachedCoords.accuracy) || 9999) : 9999;
+  const nextAcc = Number(coords.accuracy) || 9999;
+  if (!gpsState.cachedCoords || (now - gpsState.cachedAt) > 8000 || nextAcc <= prevAcc) {
+    gpsState.cachedCoords = {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      accuracy: Math.round(nextAcc * 10) / 10
+    };
+    gpsState.cachedAt = now;
+  }
+  updateCameraGpsPill();
+}
+
+function getFreshCachedGps(maxAgeMs = 25000, maxAccM = 180) {
+  if (!gpsState.cachedCoords) return null;
+  if ((Date.now() - gpsState.cachedAt) > maxAgeMs) return null;
+  if ((gpsState.cachedCoords.accuracy || 0) > maxAccM) return null;
+  return gpsState.cachedCoords;
+}
+
+function updateCameraGpsPill(mode = null) {
+  const pill = document.getElementById('camera-gps-pill');
+  if (!pill) return;
+
+  const cached = getFreshCachedGps(35000, 5000);
+  if (cached && mode !== 'error') {
+    const distM = calcDistanceMeters(cached.latitude, cached.longitude);
+    const inOffice = distM <= state.officeRadius;
+    const accTxt = cached.accuracy ? `±${Math.round(cached.accuracy)}m` : '';
+    pill.className = `camera-gps-pill ${inOffice ? 'gps-ready' : 'gps-warn'}`;
+    pill.textContent = inOffice
+      ? `✅ GPS đã sẵn sàng (${accTxt ? accTxt + ' • ' : ''}Tại công ty ${formatDistance(distM)})`
+      : `📍 GPS sẵn sàng (${accTxt ? accTxt + ' • ' : ''}Cách công ty ${formatDistance(distM)})`;
+    return;
+  }
+
+  if (mode === 'error') {
+    pill.className = 'camera-gps-pill gps-warn';
+    pill.textContent = '⚠️ Chưa lấy được GPS — hãy bật Vị trí rồi bấm chụp';
+  } else {
+    pill.className = 'camera-gps-pill gps-loading';
+    pill.textContent = '🛰️ Đang khóa trước vị trí GPS...';
+  }
+}
+
+function getOptimizedMobileGPS(onProgress, { preferCache = true } = {}) {
+  // 1. Nếu đã khóa sẵn vị trí trong lúc mở app / mở camera (< 25s) -> trả về NGAY LẬP TỨC (0ms)!
+  if (preferCache) {
+    const cached = getFreshCachedGps(25000, 180);
+    if (cached) return Promise.resolve(cached);
+  }
+
+  // 2. Nếu đang có lượt lấy GPS chạy sẵn từ lúc mở camera -> dùng chung không gọi trùng!
+  if (gpsState.activePromise) {
+    return gpsState.activePromise;
+  }
+
+  const p = new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       return reject(new Error('Trình duyệt của bạn không hỗ trợ định vị GPS.'));
     }
@@ -1253,54 +1535,106 @@ function getOptimizedMobileGPS(onProgress) {
       return reject(new Error('Định vị GPS trên 4G/5G yêu cầu đường dẫn bảo mật HTTPS.'));
     }
 
-    let resolved = false;
-    if (onProgress) onProgress('🛰️ Đang kết nối vệ tinh GPS...');
+    let settled = false;
+    let highDone = false;
+    let fastDone = false;
+    let fastFallbackTimer = null;
+    let fastBestCoords = null;
+    let lastError = null;
 
+    if (onProgress) onProgress('🛰️ Đang định vị GPS & 4G/5G song song...');
+
+    const finishSuccess = (coords) => {
+      cacheGpsCoords(coords);
+      if (settled) return;
+      settled = true;
+      if (fastFallbackTimer) clearTimeout(fastFallbackTimer);
+      resolve({
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy || 0
+      });
+    };
+
+    const maybeReject = (err) => {
+      if (settled) return;
+      if (err && err.code === 1) {
+        settled = true;
+        if (fastFallbackTimer) clearTimeout(fastFallbackTimer);
+        return reject(new Error('Bạn đã từ chối quyền Vị trí. Vui lòng cho phép quyền Vị trí trên trình duyệt để chấm công!'));
+      }
+      lastError = err || lastError;
+      if (highDone && fastDone) {
+        if (fastBestCoords) {
+          return finishSuccess(fastBestCoords);
+        }
+        settled = true;
+        if (fastFallbackTimer) clearTimeout(fastFallbackTimer);
+        let msg = 'Không thể lấy vị trí GPS.';
+        if (lastError && lastError.code === 2) msg = 'Vị trí hiện không khả dụng. Hãy bật GPS/Vị trí trên điện thoại.';
+        else if (lastError && lastError.code === 3) msg = 'Hết thời gian chờ GPS. Vui lòng thử lại ở nơi thoáng hơn.';
+        reject(new Error(msg));
+      }
+    };
+
+    // Luồng A: GPS Vệ tinh chính xác cao (chạy song song)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        if (resolved) return;
-        resolved = true;
-        resolve(pos.coords);
+        highDone = true;
+        finishSuccess(pos.coords);
       },
       (err) => {
-        if (err.code === 1) {
-          if (resolved) return;
-          resolved = true;
-          return reject(new Error('Bạn đã từ chối quyền Vị trí. Vui lòng cho phép quyền Vị trí trên trình duyệt để chấm công!'));
+        highDone = true;
+        if (fastBestCoords && !settled && (!err || err.code !== 1)) {
+          finishSuccess(fastBestCoords);
+          return;
         }
-
-        if (onProgress) onProgress('📡 Đang định vị hỗ trợ 4G/5G...');
-        navigator.geolocation.getCurrentPosition(
-          (fallbackPos) => {
-            if (resolved) return;
-            resolved = true;
-            resolve(fallbackPos.coords);
-          },
-          (fallbackErr) => {
-            if (resolved) return;
-            resolved = true;
-            let msg = 'Không thể lấy vị trí GPS.';
-            if (fallbackErr.code === 1) msg = 'Vui lòng cấp quyền truy cập Vị trí cho trình duyệt.';
-            else if (fallbackErr.code === 2) msg = 'Vị trí hiện không khả dụng. Hãy bật GPS/Vị trí trên điện thoại.';
-            else if (fallbackErr.code === 3) msg = 'Hết thời gian chờ GPS. Vui lòng thử lại ở nơi thoáng hơn.';
-            reject(new Error(msg));
-          },
-          { enableHighAccuracy: false, timeout: 6000, maximumAge: 15000 }
-        );
+        maybeReject(err);
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 2000 }
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 10000 }
     );
+
+    // Luồng B: Định vị nhanh qua sóng 4G/5G & Wi-Fi (chạy song song)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        fastDone = true;
+        fastBestCoords = pos.coords;
+        cacheGpsCoords(pos.coords);
+        if (settled) return;
+        // Nếu vệ tinh đã xong/lỗi -> chốt ngay. Nếu 4G/5G đã khá chuẩn (<=80m) chỉ đợi vệ tinh tối đa 400ms, ngược lại tối đa 2s!
+        if (highDone) {
+          finishSuccess(pos.coords);
+        } else {
+          const waitForHighMs = (pos.coords.accuracy && pos.coords.accuracy <= 80) ? 400 : 2000;
+          if (onProgress) onProgress('📡 Đã có vị trí, đang tinh chỉnh độ chính xác...');
+          fastFallbackTimer = setTimeout(() => {
+            if (!settled && fastBestCoords) finishSuccess(fastBestCoords);
+          }, waitForHighMs);
+        }
+      },
+      (err) => {
+        fastDone = true;
+        maybeReject(err);
+      },
+      { enableHighAccuracy: false, timeout: 4500, maximumAge: 25000 }
+    );
+  }).finally(() => {
+    gpsState.activePromise = null;
   });
+
+  gpsState.activePromise = p;
+  return p;
 }
 
 function prewarmGPS() {
+  warmupDriveScript();
   if (navigator.geolocation && (window.isSecureContext !== false || location.hostname === 'localhost')) {
     try {
-      navigator.geolocation.getCurrentPosition(() => {}, () => {}, {
-        enableHighAccuracy: false,
-        timeout: 3000,
-        maximumAge: 60000
-      });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => cacheGpsCoords(pos.coords),
+        () => {},
+        { enableHighAccuracy: false, timeout: 3500, maximumAge: 30000 }
+      );
     } catch {}
   }
 }
@@ -1310,7 +1644,7 @@ let currentFacingMode = 'user';
 
 function createThumbnailFromCanvas(sourceCanvas) {
   const thumb = document.createElement('canvas');
-  const size = 96;
+  const size = 88;
   thumb.width = size;
   thumb.height = size;
   const ctx = thumb.getContext('2d');
@@ -1318,7 +1652,7 @@ function createThumbnailFromCanvas(sourceCanvas) {
   const sx = (sourceCanvas.width - minSide) / 2;
   const sy = (sourceCanvas.height - minSide) / 2;
   ctx.drawImage(sourceCanvas, sx, sy, minSide, minSide, 0, 0, size, size);
-  return thumb.toDataURL('image/jpeg', 0.65);
+  return thumb.toDataURL('image/jpeg', 0.55);
 }
 
 async function startCameraStream() {
@@ -1354,9 +1688,43 @@ async function startCameraStream() {
   }
 }
 
+function setQuickWorkNote(noteText) {
+  const input = document.getElementById('camera-work-note');
+  if (!input) return;
+  input.value = noteText || '';
+  input.focus();
+}
+
 function openCameraModal() {
   document.getElementById('modal-camera').classList.add('show');
+
+  // Đặt gợi ý ghi chú phù hợp theo chế độ ca đang chọn
+  const noteInput = document.getElementById('camera-work-note');
+  if (noteInput) {
+    noteInput.value = '';
+    const activeMode = (state.nextAction === 'OUT' && state.lastAttendance && state.lastAttendance.shift_mode)
+      ? state.lastAttendance.shift_mode
+      : state.selectedShiftMode;
+    if (activeMode === 'crm') {
+      noteInput.placeholder = '👷 Ghi chú Trực CRM (VD: Trực CRM cả ngày hôm nay...)';
+    } else if (activeMode === 'overtime') {
+      noteInput.placeholder = '⚡ Nội dung Tăng ca (VD: Xử lý sự cố MBA, kéo dây...)';
+    } else if (activeMode === 'holiday') {
+      noteInput.placeholder = '★ Nội dung Trực lễ (VD: Trực vận hành lưới điện lễ...)';
+    } else {
+      noteInput.placeholder = '💬 Ghi chú công việc (không bắt buộc, VD: Đi hiện trường...)';
+    }
+  }
+
+  // Chạy song song 3 việc ngay khi mở Camera: mở video + đánh thức Google Drive + khóa trước GPS!
   startCameraStream();
+  warmupDriveScript();
+  updateCameraGpsPill('loading');
+  if (navigator.geolocation && (window.isSecureContext !== false || location.hostname === 'localhost')) {
+    getOptimizedMobileGPS(null, { preferCache: true })
+      .then(() => updateCameraGpsPill())
+      .catch(() => updateCameraGpsPill('error'));
+  }
 }
 
 function closeCameraModal() {
@@ -1383,7 +1751,7 @@ document.getElementById('btn-snap-photo').addEventListener('click', () => {
 
   const width = video.videoWidth || 480;
   const height = video.videoHeight || 360;
-  const scale = Math.min(440 / width, 440 / height, 1);
+  const scale = Math.min(400 / width, 400 / height, 1);
   canvas.width = Math.round(width * scale);
   canvas.height = Math.round(height * scale);
 
@@ -1394,12 +1762,13 @@ document.getElementById('btn-snap-photo').addEventListener('click', () => {
   }
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  const fullPhoto = canvas.toDataURL('image/jpeg', 0.72);
+  const fullPhoto = canvas.toDataURL('image/jpeg', 0.68);
   const thumbPhoto = createThumbnailFromCanvas(canvas);
+  const workNote = (document.getElementById('camera-work-note')?.value || '').trim();
   playShutterSound();
 
   closeCameraModal();
-  executePunchWithPhoto(fullPhoto, thumbPhoto);
+  executePunchWithPhoto(fullPhoto, thumbPhoto, workNote);
 });
 
 document.getElementById('camera-fallback-file').addEventListener('change', (e) => {
@@ -1407,23 +1776,24 @@ document.getElementById('camera-fallback-file').addEventListener('change', (e) =
   e.target.value = '';
   if (!file) return;
 
+  const workNote = (document.getElementById('camera-work-note')?.value || '').trim();
   const reader = new FileReader();
   reader.onload = (evt) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.getElementById('camera-canvas');
-      const scale = Math.min(440 / img.width, 440 / img.height, 1);
+      const scale = Math.min(400 / img.width, 400 / img.height, 1);
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const fullPhoto = canvas.toDataURL('image/jpeg', 0.72);
+      const fullPhoto = canvas.toDataURL('image/jpeg', 0.68);
       const thumbPhoto = createThumbnailFromCanvas(canvas);
       playShutterSound();
 
       closeCameraModal();
-      executePunchWithPhoto(fullPhoto, thumbPhoto);
+      executePunchWithPhoto(fullPhoto, thumbPhoto, workNote);
     };
     img.src = evt.target.result;
   };
@@ -1450,7 +1820,71 @@ function renderZoneBadge(distanceM) {
     : `<span class="zone-badge zone-far">⚠️ Cách công ty ${distText}</span>`;
 }
 
-async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
+function updateResultSyncUI(attId, statusText, isDone = false) {
+  const row = document.getElementById('res-sync-row');
+  const el = document.getElementById('res-sync-status');
+  if (!row || !el) return;
+  if (row.dataset.attId && row.dataset.attId !== attId) return;
+  row.classList.remove('hidden');
+  el.textContent = statusText;
+  el.className = `result-value ${isDone ? 'sync-status-done' : 'sync-status-pending'}`;
+}
+
+async function syncPhotoToDriveInBackground(record, fullPhoto, { dateKey, timeTag }) {
+  if (!fullPhoto || !record || !record.id) return;
+  pendingDriveUploads++;
+  pendingLocalPhotos.set(record.id, fullPhoto);
+
+  try {
+    const driveResult = await uploadPhotoToDrive(fullPhoto, {
+      userName: record.user_name,
+      dateKey,
+      timeTag,
+      actionType: record.type
+    });
+
+    if (driveResult && driveResult.fileId) {
+      await DB.updateAttendancePhoto(record.id, {
+        photo_thumb: driveResult.thumbUrl,
+        photo_full_url: driveResult.fullUrl,
+        photo_drive_id: driveResult.fileId,
+        photo_drive_view_url: driveResult.viewUrl,
+        photo_download_url: driveResult.downloadUrl,
+        photo_storage: 'drive',
+        has_photo: true
+      });
+      updateResultSyncUI(record.id, '☁️ Đã lưu ảnh .jpg lên Google Drive ✓', true);
+    } else {
+      // Dự phòng nếu Google Drive lỗi/mất mạng -> lưu ảnh sang Firebase để không mất ảnh
+      await DB.updateAttendancePhoto(
+        record.id,
+        { photo_storage: 'firestore', has_photo: true },
+        fullPhoto,
+        record.user_id,
+        record.timestamp
+      );
+      updateResultSyncUI(record.id, '🔥 Đã lưu ảnh dự phòng trên Firebase ✓', true);
+    }
+    loadMyHistory().catch(() => {});
+  } catch (err) {
+    console.warn('Lỗi đồng bộ ảnh nền:', err.message);
+    try {
+      await DB.updateAttendancePhoto(
+        record.id,
+        { photo_storage: 'firestore', has_photo: true },
+        fullPhoto,
+        record.user_id,
+        record.timestamp
+      );
+      updateResultSyncUI(record.id, '🔥 Đã lưu ảnh dự phòng trên Firebase ✓', true);
+    } catch {}
+  } finally {
+    pendingDriveUploads = Math.max(0, pendingDriveUploads - 1);
+    setTimeout(() => pendingLocalPhotos.delete(record.id), 120000);
+  }
+}
+
+async function executePunchWithPhoto(fullPhoto, thumbPhoto, workNote = '') {
   const btn = document.getElementById('btn-punch');
   const text = document.getElementById('punch-text');
   const subtext = document.getElementById('punch-subtext');
@@ -1458,21 +1892,25 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
 
   state.isPunching = true;
   btn.classList.add('loading');
-  icon.textContent = '📡';
-  text.textContent = 'ĐANG ĐỊNH VỊ...';
-  subtext.textContent = 'Đang lấy tọa độ GPS';
+  icon.textContent = '⚡';
+  text.textContent = 'ĐANG CHẤM CÔNG...';
+  subtext.textContent = 'Đang xác thực & khóa tọa độ';
 
   try {
-    const freshUser = await verifySessionToken(state.token);
+    // Chạy SONG SONG cả 3 bước: kiểm tra phiên + lấy GPS (thường 0ms vì đã khóa lúc mở camera) + kiểm tra ca trước
+    const [freshUser, coords, recent] = await Promise.all([
+      verifySessionToken(state.token),
+      getOptimizedMobileGPS((progressMsg) => {
+        subtext.textContent = progressMsg;
+      }, { preferCache: true }),
+      DB.getUserAttendance(state.user.phone, 1)
+    ]);
+
     if (!freshUser) {
       showToast('Phiên đăng nhập không hợp lệ hoặc tài khoản đã bị khóa.', 'error');
       await logout();
       return;
     }
-
-    const coords = await getOptimizedMobileGPS((progressMsg) => {
-      subtext.textContent = progressMsg;
-    });
 
     const lat = Number(coords.latitude);
     const lng = Number(coords.longitude);
@@ -1480,10 +1918,9 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
     const distanceM = calcDistanceMeters(lat, lng);
     const inOffice = distanceM <= state.officeRadius;
 
-    text.textContent = 'ĐANG LƯU...';
+    text.textContent = 'ĐANG LƯU CA...';
     subtext.textContent = `Cách công ty ${formatDistance(distanceM)}`;
 
-    const recent = await DB.getUserAttendance(state.user.phone, 1);
     const last = recent.length > 0 ? recent[0] : null;
     const actionType = (!last || last.type === 'OUT') ? 'IN' : 'OUT';
     const shiftMode = (actionType === 'OUT' && last && last.shift_mode)
@@ -1502,22 +1939,7 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
       second: '2-digit'
     }).format(new Date(now)).replace(/:/g, '-');
 
-    // Nếu đã cấu hình Google Drive -> tải ảnh lên Drive (0KB ảnh trên Firebase!)
-    let driveResult = null;
-    if (fullPhoto && isDriveConfigured()) {
-      text.textContent = 'LƯU ẢNH DRIVE...';
-      subtext.textContent = 'Đang tải ảnh lên Google Drive';
-      driveResult = await uploadPhotoToDrive(fullPhoto, {
-        userName: state.user.name,
-        dateKey,
-        timeTag,
-        actionType
-      });
-    }
-
-    text.textContent = 'ĐANG LƯU CA...';
-    subtext.textContent = `Cách công ty ${formatDistance(distanceM)}`;
-
+    const willUploadToDrive = Boolean(fullPhoto && isDriveConfigured());
     const attId = `att_${now}_${Math.random().toString(36).slice(2, 7)}`;
     const record = {
       id: attId,
@@ -1530,7 +1952,7 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
       shift_mode: shiftMode,
       shift_mode_text: shiftModeLabel,
       is_manual: false,
-      note: '',
+      note: String(workNote || '').trim(),
       timestamp: now,
       datetime_str: timeStr,
       date_key: dateKey,
@@ -1540,29 +1962,35 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
       distance_m: distanceM,
       in_office: inOffice,
       mapUrl: `https://www.google.com/maps?q=${lat},${lng}`,
-      photo_thumb: driveResult ? driveResult.thumbUrl : (thumbPhoto || ''),
-      photo_full_url: driveResult ? driveResult.fullUrl : '',
-      photo_drive_id: driveResult ? driveResult.fileId : '',
-      photo_drive_view_url: driveResult ? driveResult.viewUrl : '',
-      photo_download_url: driveResult ? driveResult.downloadUrl : '',
-      photo_storage: driveResult ? 'drive' : (fullPhoto ? 'firestore' : ''),
-      has_photo: Boolean(driveResult || fullPhoto)
+      photo_thumb: thumbPhoto || '',
+      photo_full_url: '',
+      photo_drive_id: '',
+      photo_drive_view_url: '',
+      photo_download_url: '',
+      photo_storage: willUploadToDrive ? 'uploading' : (fullPhoto ? 'firestore' : ''),
+      has_photo: Boolean(fullPhoto)
     };
 
-    // Nếu đã lưu lên Drive -> truyền null để KHÔNG lưu byte ảnh nào vào Firebase!
-    await DB.addAttendance(record, driveResult ? null : fullPhoto);
+    // Lưu NGAY giờ công + tọa độ + ảnh thu nhỏ (~2.5KB) để nhân viên nhận kết quả tức thì (< 1 giây)!
+    // Khi đã bật Drive, KHÔNG ghi fullPhoto vào Firebase mà đẩy ảnh .jpg lên Drive chạy ngầm phía sau.
+    await DB.addAttendance(record, willUploadToDrive ? null : fullPhoto);
 
     playSuccessSound();
     const actionLabel = actionType === 'IN' ? `VÀO ${shiftModeLabel.toUpperCase()}` : `RA ${shiftModeLabel.toUpperCase()}`;
     showToast(`✅ Chấm công ${actionLabel} thành công!`, 'success', 4000);
 
-    showPunchResult(record, fullPhoto);
+    showPunchResult(record, fullPhoto, willUploadToDrive);
 
     state.lastAttendance = record;
     state.nextAction = actionType === 'IN' ? 'OUT' : 'IN';
     if (actionType === 'OUT') state.selectedShiftMode = 'normal';
     updatePunchButtonUI();
-    await loadMyHistory();
+
+    // Đẩy ảnh rõ nét (.jpg) lên Google Drive chạy ngầm & tải lại lịch sử không chặn giao diện
+    if (willUploadToDrive) {
+      syncPhotoToDriveInBackground(record, fullPhoto, { dateKey, timeTag });
+    }
+    loadMyHistory().catch(() => {});
   } catch (err) {
     playErrorSound();
     showToast(err.message || 'Lỗi chấm công.', 'error', 5000);
@@ -1575,7 +2003,7 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto) {
   }
 }
 
-function showPunchResult(record, fullPhoto) {
+function showPunchResult(record, fullPhoto, isUploadingDrive = false) {
   const card = document.getElementById('punch-result-card');
   const typeEl = document.getElementById('res-type');
   const timeEl = document.getElementById('res-time');
@@ -1585,6 +2013,8 @@ function showPunchResult(record, fullPhoto) {
   const mapLink = document.getElementById('res-map-link');
   const photoRow = document.getElementById('res-photo-row');
   const photoImg = document.getElementById('res-photo-img');
+  const syncRow = document.getElementById('res-sync-row');
+  const syncStatus = document.getElementById('res-sync-status');
 
   const modeLabel = getShiftModeLabel(record.shift_mode);
   typeEl.textContent = record.type === 'IN' ? `✅ Vào ca (${modeLabel})` : `👋 Ra ca (${modeLabel})`;
@@ -1595,6 +2025,17 @@ function showPunchResult(record, fullPhoto) {
   gpsEl.textContent = `${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}`;
   accEl.textContent = `± ${record.accuracy}m`;
   mapLink.href = record.mapUrl;
+
+  if (syncRow && syncStatus) {
+    syncRow.dataset.attId = record.id || '';
+    if (isUploadingDrive) {
+      syncRow.classList.remove('hidden');
+      syncStatus.textContent = '☁️ Đang đẩy ảnh .jpg lên Google Drive...';
+      syncStatus.className = 'result-value sync-status-pending';
+    } else {
+      syncRow.classList.add('hidden');
+    }
+  }
 
   const previewSrc = fullPhoto || record.photo_thumb;
   if (previewSrc) {
@@ -1647,7 +2088,8 @@ async function openPhotoViewer(attId, fallbackSrc, title, meta = null) {
   const delBtn = document.getElementById('btn-delete-viewer-photo');
 
   titleEl.textContent = title || 'Ảnh Chấm Công';
-  const initialSrc = (meta && meta.photo_full_url) ? meta.photo_full_url : (fallbackSrc || '');
+  const localPendingSrc = attId ? pendingLocalPhotos.get(attId) : '';
+  const initialSrc = localPendingSrc || ((meta && meta.photo_full_url) ? meta.photo_full_url : (fallbackSrc || ''));
   imgEl.src = initialSrc;
 
   const safeName = makeSafeFilename(title || attId || 'anh_cham_cong');
@@ -1688,8 +2130,8 @@ async function openPhotoViewer(attId, fallbackSrc, title, meta = null) {
     : '';
   document.getElementById('modal-photo-viewer').classList.add('show');
 
-  // Nếu ảnh lưu trên Google Drive -> không cần đọc từ Firebase attendance_photos!
-  if (meta && meta.photo_full_url) {
+  // Nếu đã có ảnh nét trong bộ nhớ tạm hoặc ảnh lưu trên Google Drive -> không cần đọc từ Firebase attendance_photos!
+  if (localPendingSrc || (meta && meta.photo_full_url)) {
     detailsEl.innerHTML = metaHtml;
     return;
   }
@@ -1717,6 +2159,9 @@ document.getElementById('btn-download-photo').addEventListener('click', () => {
 });
 
 document.getElementById('btn-delete-viewer-photo').addEventListener('click', async () => {
+  if (!isAdmin()) {
+    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa ảnh!', 'error');
+  }
   const attId = state.currentViewer.attId;
   if (!attId) return;
   if (!confirm('Xác nhận xóa ảnh khuôn mặt này?\n(Giờ chấm công và tọa độ GPS vẫn được giữ nguyên)')) return;
@@ -1763,6 +2208,7 @@ async function loadMyHistory() {
                   ${item.type === 'IN' ? 'Vào ca' : 'Ra ca'}
                 </span>
                 ${renderShiftModeBadge(item.shift_mode)}
+                ${renderPunctualityBadge(item)}
                 ${renderManualBadge(item)}
                 <span class="history-time">${escapeHtml(item.datetime_str)}</span>
               </div>
@@ -1999,19 +2445,26 @@ function showAttendanceView() {
   document.getElementById('view-admin').classList.add('hidden');
   document.getElementById('view-attendance').classList.remove('hidden');
   const btn = document.getElementById('btn-toggle-admin-view');
-  if (btn) btn.textContent = '⚙️ Quản lý';
+  if (btn) btn.textContent = isLeader() ? '👁️ Giám sát' : '⚙️ Quản lý';
 }
 
 async function showAdminView() {
+  if (!canViewDashboard()) return;
   document.getElementById('view-attendance').classList.add('hidden');
   document.getElementById('view-admin').classList.remove('hidden');
   const btn = document.getElementById('btn-toggle-admin-view');
   if (btn) btn.textContent = '🕒 Chấm công';
 
+  applyDashboardRoleUI();
+  if (!isAdmin() && !document.getElementById('admin-tab-staff').classList.contains('hidden')) {
+    switchAdminTab('history');
+  }
+
   await loadAdminData();
 }
 
 function toggleAdminView() {
+  if (!canViewDashboard()) return;
   const adminView = document.getElementById('view-admin');
   if (adminView.classList.contains('hidden')) {
     showAdminView();
@@ -2021,19 +2474,26 @@ function toggleAdminView() {
 }
 
 function switchAdminTab(tab) {
+  if (tab === 'staff' && !isAdmin()) {
+    tab = 'history';
+  }
   const historyTab = document.getElementById('admin-tab-history');
+  const summaryTab = document.getElementById('admin-tab-summary');
   const reqTab = document.getElementById('admin-tab-requests');
   const staffTab = document.getElementById('admin-tab-staff');
 
   const btnHistory = document.getElementById('tab-btn-history');
+  const btnSummary = document.getElementById('tab-btn-summary');
   const btnReq = document.getElementById('tab-btn-requests');
   const btnStaff = document.getElementById('tab-btn-staff');
 
   historyTab.classList.add('hidden');
+  if (summaryTab) summaryTab.classList.add('hidden');
   reqTab.classList.add('hidden');
   staffTab.classList.add('hidden');
 
   btnHistory.classList.remove('active');
+  if (btnSummary) btnSummary.classList.remove('active');
   btnReq.classList.remove('active');
   btnStaff.classList.remove('active');
 
@@ -2041,6 +2501,10 @@ function switchAdminTab(tab) {
     historyTab.classList.remove('hidden');
     btnHistory.classList.add('active');
     renderAdminHistoryTable();
+  } else if (tab === 'summary') {
+    if (summaryTab) summaryTab.classList.remove('hidden');
+    if (btnSummary) btnSummary.classList.add('active');
+    renderMonthlySummaryTable();
   } else if (tab === 'requests') {
     reqTab.classList.remove('hidden');
     btnReq.classList.add('active');
@@ -2053,22 +2517,25 @@ function switchAdminTab(tab) {
 }
 
 // ==========================================
-// 11. BẢNG QUẢN LÝ: THỐNG KÊ, LỊCH SỬ 30 NGƯỜI, DUYỆT ĐƠN & NHÂN SỰ
+// 11. BẢNG QUẢN LÝ: THỐNG KÊ, LỊCH SỬ 30 NGƯỜI, TỔNG HỢP THÁNG, DUYỆT ĐƠN & NHÂN SỰ
 // ==========================================
 async function loadAdminData() {
-  if (!state.user || state.user.role !== 'admin') return;
+  if (!canViewDashboard()) return;
   try {
     const [users, records, requests] = await Promise.all([
       DB.getAllUsers(),
-      DB.getAllAttendance(500),
-      DB.getAllRequests(300).catch(err => {
+      DB.getAllAttendance(2500),
+      DB.getAllRequests(500).catch(err => {
         console.warn('Không tải được requests:', err.message);
         return [];
       })
     ]);
 
+    const roleOrder = { admin: 0, leader: 1, employee: 2 };
     users.sort((a, b) => {
-      if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+      const ra = roleOrder[a.role] ?? 2;
+      const rb = roleOrder[b.role] ?? 2;
+      if (ra !== rb) return ra - rb;
       return (a.created_at || 0) - (b.created_at || 0);
     });
 
@@ -2079,7 +2546,10 @@ async function loadAdminData() {
     const now = Date.now();
     const todayKey = getVnDateKey(now);
     const lockedCount = users.filter(u => u.is_locked === 1 || (u.lock_until && u.lock_until > now)).length;
-    const todayPunches = records.filter(r => (r.date_key || getVnDateKey(r.timestamp)) === todayKey).length;
+    const todayRecords = records.filter(r => (r.date_key || getVnDateKey(r.timestamp)) === todayKey);
+    const todayInCount = todayRecords.filter(r => r.type === 'IN').length;
+    const todayOutCount = todayRecords.filter(r => r.type === 'OUT').length;
+    const todayPunches = todayRecords.length;
     const pendingRequestsCount = requests.filter(r => r.status === 'pending').length;
 
     const lastPunchByUser = new Map();
@@ -2095,7 +2565,11 @@ async function loadAdminData() {
 
     document.getElementById('stat-total-users').textContent = `${users.length}/${MAX_USERS}`;
     document.getElementById('stat-in-shift').textContent = inShiftCount;
-    document.getElementById('stat-today-punches').textContent = todayPunches;
+    const statTodayIn = document.getElementById('stat-today-in');
+    const statTodayOut = document.getElementById('stat-today-out');
+    if (statTodayIn) statTodayIn.textContent = todayInCount;
+    if (statTodayOut) statTodayOut.textContent = todayOutCount;
+    document.getElementById('stat-today-punches').textContent = `Tổng: ${todayPunches} lượt hôm nay`;
     document.getElementById('stat-pending-requests').textContent = pendingRequestsCount;
     document.getElementById('stat-locked-users').textContent = lockedCount;
 
@@ -2122,15 +2596,28 @@ async function loadAdminData() {
       if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
     });
 
+    const monthInput = document.getElementById('summary-month-input');
+    if (monthInput && !monthInput.value) {
+      monthInput.value = todayKey.slice(0, 7);
+    }
+
+    renderForgotCheckoutPanel(lastPunchByUser, users);
     renderAdminHistoryTable();
+    renderMonthlySummaryTable();
     renderAdminRequestsList();
-    renderAdminStaffTable(lastPunchByUser);
+    if (isAdmin()) {
+      renderAdminStaffTable(lastPunchByUser);
+    }
   } catch (err) {
     showToast('Lỗi tải dữ liệu quản trị: ' + err.message, 'error');
   }
 }
 
 document.getElementById('admin-radius-select').addEventListener('change', (e) => {
+  if (!isAdmin()) {
+    updateOfficeRadiusUI();
+    return showToast('Chỉ Admin mới được chỉnh bán kính công ty!', 'error');
+  }
   const val = parseInt(e.target.value, 10) || 200;
   state.officeRadius = val;
   localStorage.setItem(LOCAL_KEYS.radius, String(val));
@@ -2165,8 +2652,12 @@ function renderAdminHistoryTable() {
     return;
   }
 
+  const adminOnly = isAdmin();
   tbody.innerHTML = filtered.map(r => {
     const distM = getRecordDistance(r);
+    const roleTag = r.user_role === 'admin'
+      ? '<span class="badge badge-admin" style="font-size: 0.65rem; margin-left: 4px;">Admin</span>'
+      : (r.user_role === 'leader' ? '<span class="badge badge-leader" style="font-size: 0.65rem; margin-left: 4px;">Tổ trưởng</span>' : '');
     return `
       <tr>
         <td style="text-align: center;">
@@ -2179,7 +2670,7 @@ function renderAdminHistoryTable() {
         <td>
           <div>
             <b>${escapeHtml(r.user_name)}</b>
-            ${r.user_role === 'admin' ? '<span class="badge badge-admin" style="font-size: 0.65rem; margin-left: 4px;">Admin</span>' : ''}
+            ${roleTag}
           </div>
           <small style="color: var(--text-dim);"><code>${escapeHtml(r.user_phone)}</code></small>
         </td>
@@ -2190,6 +2681,7 @@ function renderAdminHistoryTable() {
                 ${r.type === 'IN' ? 'Vào ca' : 'Ra ca'}
               </span>
               ${renderShiftModeBadge(r.shift_mode)}
+              ${renderPunctualityBadge(r)}
             </div>
             ${renderManualBadge(r)}
             ${r.note ? `<div class="manual-note-text">💬 ${escapeHtml(r.note)}</div>` : ''}
@@ -2204,9 +2696,11 @@ function renderAdminHistoryTable() {
             <a href="${escapeHtml(r.mapUrl)}" target="_blank" class="btn-map">
               📍 Bản đồ
             </a>
-            <button type="button" class="btn-sm btn-lock" data-del-att-id="${escapeHtml(r.id)}" data-del-att-label="${escapeHtml(r.user_name + ' - ' + r.typeText + ' lúc ' + r.datetime_str)}" title="Xóa hẳn dòng chấm công này">
-              🗑️
-            </button>
+            ${adminOnly ? `
+              <button type="button" class="btn-sm btn-lock" data-del-att-id="${escapeHtml(r.id)}" data-del-att-label="${escapeHtml(r.user_name + ' - ' + r.typeText + ' lúc ' + r.datetime_str)}" title="Xóa hẳn dòng chấm công này">
+                🗑️
+              </button>
+            ` : ''}
           </div>
         </td>
       </tr>
@@ -2222,6 +2716,9 @@ function renderAdminHistoryTable() {
 
   tbody.querySelectorAll('button[data-del-att-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (!isAdmin()) {
+        return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa dữ liệu chấm công!', 'error');
+      }
       const attId = btn.dataset.delAttId;
       const label = btn.dataset.delAttLabel;
       if (!confirm(`Xóa VĨNH VIỄN dòng chấm công này?\n\n${label}\n(Cả giờ chấm công, GPS và ảnh kèm theo sẽ bị xóa khỏi hệ thống)`)) {
@@ -2245,12 +2742,13 @@ function renderAdminHistoryTable() {
 
 function renderAdminPhotoGallery(filtered, galleryEl) {
   if (!galleryEl) return;
+  const adminOnly = isAdmin();
   const withPhotos = (filtered || []).filter(r => Boolean(r.photo_thumb));
   if (withPhotos.length === 0) {
     galleryEl.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1;">
         <div class="empty-icon">✨</div>
-        <p>Hiện không còn ảnh chấm công nào trong bộ lọc này.<br><small style="color: var(--text-dim);">Các ảnh đã xóa được ẩn khỏi Lưới ảnh. Bấm <b>"📋 Dạng bảng"</b> để xem hoặc xóa các dòng giờ Vào/Ra.</small></p>
+        <p>Hiện không còn ảnh chấm công nào trong bộ lọc này.<br><small style="color: var(--text-dim);">Bấm <b>"📋 Dạng bảng"</b> để xem danh sách giờ Vào/Ra chi tiết.</small></p>
       </div>
     `;
     return;
@@ -2270,16 +2768,19 @@ function renderAdminPhotoGallery(filtered, galleryEl) {
         <div class="gallery-body">
           <div class="gallery-name">${escapeHtml(r.user_name)}</div>
           <div class="gallery-time">🕒 ${escapeHtml(r.datetime_str)}</div>
-          <div style="display: flex; gap: 4px; flex-wrap: wrap;">${renderZoneBadge(distM)} ${renderShiftModeBadge(r.shift_mode)}</div>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap;">${renderZoneBadge(distM)} ${renderShiftModeBadge(r.shift_mode)} ${renderPunctualityBadge(r)}</div>
+          ${r.note ? `<div class="manual-note-text">💬 ${escapeHtml(r.note)}</div>` : ''}
           <div class="gallery-footer">
             <a href="${escapeHtml(r.mapUrl)}" target="_blank" class="btn-map" style="padding: 4px 8px; font-size: 0.72rem;">📍 Bản đồ</a>
             <div style="display: flex; gap: 4px;">
               <button type="button" class="btn-sm btn-unlock" data-quick-dl="${escapeHtml(r.id)}" data-dl-name="${escapeHtml(r.user_name + '_' + r.date_key + '_' + r.type)}">
                 ⬇️ Tải
               </button>
-              <button type="button" class="btn-sm btn-lock" data-quick-del-photo="${escapeHtml(r.id)}" title="Chỉ xóa ảnh này (giữ giờ công)">
-                🗑️
-              </button>
+              ${adminOnly ? `
+                <button type="button" class="btn-sm btn-lock" data-quick-del-photo="${escapeHtml(r.id)}" title="Chỉ xóa ảnh này (giữ giờ công)">
+                  🗑️
+                </button>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -2321,6 +2822,9 @@ function renderAdminPhotoGallery(filtered, galleryEl) {
 
   galleryEl.querySelectorAll('button[data-quick-del-photo]').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (!isAdmin()) {
+        return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa ảnh!', 'error');
+      }
       const attId = btn.dataset.quickDelPhoto;
       if (!confirm('Xóa ảnh này khỏi hệ thống? (Giờ chấm công và tọa độ GPS vẫn giữ nguyên)')) return;
       btn.disabled = true;
@@ -2350,17 +2854,347 @@ document.getElementById('btn-toggle-gallery').addEventListener('click', () => {
   } else {
     galleryEl.classList.add('hidden');
     tableWrap.classList.remove('hidden');
-    btn.textContent = '🖼️ Lưới ảnh';
+    btn.textContent = '🖼️ Ảnh';
   }
+});
+
+// --- CẢNH BÁO QUÊN CHẤM RA CA + BẢNG CÔNG TỔNG HỢP THÁNG ---
+function renderForgotCheckoutPanel(lastPunchByUser, users) {
+  const panel = document.getElementById('forgot-checkout-panel');
+  const titleEl = document.getElementById('forgot-checkout-title');
+  const listEl = document.getElementById('forgot-checkout-list');
+  if (!panel || !listEl) return;
+
+  const now = Date.now();
+  const todayKey = getVnDateKey(now);
+  const nowVnMins = getVnMinutesOfDay(now);
+  const stdOutMins = WORK_SCHEDULE.outHour * 60 + WORK_SCHEDULE.outMinute; // 18:30
+  const userByPhone = new Map((users || []).map(u => [u.phone, u]));
+
+  const forgotList = [];
+  lastPunchByUser.forEach((rec, phone) => {
+    if (!rec || rec.type !== 'IN') return;
+    const recDate = rec.date_key || getVnDateKey(rec.timestamp);
+    const isPastDay = recDate < todayKey;
+    const isPastCheckoutToday = recDate === todayKey && nowVnMins > stdOutMins;
+    if (isPastDay || isPastCheckoutToday) {
+      const u = userByPhone.get(phone);
+      forgotList.push({
+        phone,
+        name: (u && u.name) || rec.user_name || phone,
+        rec,
+        recDate,
+        isPastDay
+      });
+    }
+  });
+
+  if (forgotList.length === 0) {
+    panel.classList.add('hidden');
+    listEl.innerHTML = '';
+    return;
+  }
+
+  forgotList.sort((a, b) => a.rec.timestamp - b.rec.timestamp);
+  titleEl.textContent = `⚠️ Cảnh báo: ${forgotList.length} nhân sự chưa chấm Ra ca (quá giờ 18:30 / ngày trước)`;
+  const adminOnly = isAdmin();
+
+  listEl.innerHTML = forgotList.map(item => `
+    <div class="forgot-item">
+      <div class="forgot-item-info">
+        <b>${escapeHtml(item.name)}</b> (<code>${escapeHtml(item.phone)}</code>)
+        ${renderShiftModeBadge(item.rec.shift_mode)}
+        <span style="color: #fcd34d;">• Vào lúc ${escapeHtml(item.rec.datetime_str)} ${item.isPastDay ? '(chưa ra ca từ hôm trước)' : '(đã quá 18:30)'}</span>
+      </div>
+      ${adminOnly ? `
+        <button type="button" class="btn-sm btn-unlock" data-forgot-phone="${escapeHtml(item.phone)}" data-forgot-date="${escapeHtml(item.recDate)}" data-forgot-mode="${escapeHtml(item.rec.shift_mode || 'normal')}">
+          ✍️ Chấm bù Ra ca
+        </button>
+      ` : `
+        <span class="readonly-tag">👁️ Nhắc nhân viên</span>
+      `}
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('button[data-forgot-phone]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openAdminPunchModal(btn.dataset.forgotPhone, {
+        type: 'OUT',
+        shiftMode: btn.dataset.forgotMode || 'normal',
+        date: btn.dataset.forgotDate || todayKey,
+        time: '18:30',
+        note: 'Admin chấm bù Ra ca (nhân viên quên chấm)'
+      });
+    });
+  });
+
+  panel.classList.remove('hidden');
+}
+
+function countApprovedLeaveDaysInMonth(requests, userPhone, monthKey) {
+  let days = 0;
+  for (const r of requests) {
+    if (r.user_id !== userPhone || r.category !== 'leave' || r.status !== 'approved') continue;
+    if (!r.from_date) continue;
+    const startStr = r.from_date;
+    const endStr = r.to_date || r.from_date;
+    const startDt = new Date(startStr + 'T00:00:00Z');
+    const endDt = new Date(endStr + 'T00:00:00Z');
+    if (isNaN(startDt.getTime()) || isNaN(endDt.getTime())) continue;
+    for (let d = new Date(startDt); d <= endDt && days < 62; d.setUTCDate(d.getUTCDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10);
+      if (iso.startsWith(monthKey)) days++;
+    }
+  }
+  return days;
+}
+
+function computeMonthlySummary(monthKey) {
+  const users = state.allUsersList || [];
+  const allRecords = state.adminRecordsCache || [];
+  const allRequests = state.adminRequestsCache || [];
+
+  const todayKey = getVnDateKey();
+  const nowVnMins = getVnMinutesOfDay(Date.now());
+  const stdInMins = WORK_SCHEDULE.inHour * 60 + WORK_SCHEDULE.inMinute;
+  const stdOutMins = WORK_SCHEDULE.outHour * 60 + WORK_SCHEDULE.outMinute;
+
+  const monthRecords = allRecords.filter(r => (r.date_key || getVnDateKey(r.timestamp)).startsWith(monthKey));
+
+  return users.map(u => {
+    const uRecs = monthRecords
+      .filter(r => r.user_id === u.phone)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const byDate = new Map();
+    for (const r of uRecs) {
+      const dk = r.date_key || getVnDateKey(r.timestamp);
+      if (!byDate.has(dk)) byDate.set(dk, []);
+      byDate.get(dk).push(r);
+    }
+
+    const normalDates = new Set();
+    const crmDates = new Set();
+    let normalHours = 0;
+    let crmHours = 0;
+    let overtimeShifts = 0;
+    let overtimeHours = 0;
+    let holidayShifts = 0;
+    let holidayHours = 0;
+    let lateCount = 0;
+    let lateMinutes = 0;
+    let earlyCount = 0;
+    let earlyMinutes = 0;
+    let forgotOutCount = 0;
+
+    byDate.forEach((dayRecs, dk) => {
+      // 1. Đếm ngày công & số ca theo từng chế độ
+      let firstNormalIn = null;
+      let lastNormalOut = null;
+
+      for (const r of dayRecs) {
+        const mode = r.shift_mode || 'normal';
+        if (mode === 'normal') {
+          normalDates.add(dk);
+          if (r.type === 'IN' && !firstNormalIn) firstNormalIn = r;
+          if (r.type === 'OUT') lastNormalOut = r;
+        } else if (mode === 'crm') {
+          crmDates.add(dk);
+        } else if (mode === 'overtime') {
+          if (r.type === 'IN') overtimeShifts++;
+        } else if (mode === 'holiday') {
+          if (r.type === 'IN') holidayShifts++;
+        }
+      }
+
+      // 2. Tính đi muộn (>07:30) / về sớm (<18:30) theo lượt đầu & cuối Ca thường trong ngày
+      if (firstNormalIn) {
+        const mins = getVnMinutesOfDay(firstNormalIn.timestamp);
+        if (mins > stdInMins) {
+          lateCount++;
+          lateMinutes += (mins - stdInMins);
+        }
+      }
+      if (lastNormalOut) {
+        const mins = getVnMinutesOfDay(lastNormalOut.timestamp);
+        if (mins < stdOutMins) {
+          earlyCount++;
+          earlyMinutes += (stdOutMins - mins);
+        }
+      }
+
+      // 3. Ghép cặp IN -> OUT để tính tổng giờ làm cho từng chế độ ca
+      let openIn = null;
+      for (const r of dayRecs) {
+        if (r.type === 'IN') {
+          openIn = r;
+        } else if (r.type === 'OUT' && openIn) {
+          const diffH = Math.max(0, Math.min(24, (r.timestamp - openIn.timestamp) / 3600000));
+          const mode = openIn.shift_mode || r.shift_mode || 'normal';
+          if (mode === 'overtime') overtimeHours += diffH;
+          else if (mode === 'holiday') holidayHours += diffH;
+          else if (mode === 'crm') crmHours += diffH;
+          else normalHours += diffH;
+          openIn = null;
+        }
+      }
+
+      // 4. Đếm quên chấm Ra ca (cuối ngày vẫn còn openIn, bỏ qua hôm nay trước 18:30)
+      if (openIn) {
+        const isPastDay = dk < todayKey;
+        const isPastOutToday = dk === todayKey && nowVnMins > stdOutMins;
+        if (isPastDay || isPastOutToday) {
+          forgotOutCount++;
+        }
+      }
+    });
+
+    const approvedLeaveDays = countApprovedLeaveDaysInMonth(allRequests, u.phone, monthKey);
+
+    return {
+      user: u,
+      normalDays: normalDates.size,
+      normalHours: Math.round(normalHours * 10) / 10,
+      crmDays: crmDates.size,
+      crmHours: Math.round(crmHours * 10) / 10,
+      overtimeShifts,
+      overtimeHours: Math.round(overtimeHours * 10) / 10,
+      holidayShifts,
+      holidayHours: Math.round(holidayHours * 10) / 10,
+      approvedLeaveDays,
+      lateCount,
+      lateMinutes,
+      earlyCount,
+      earlyMinutes,
+      forgotOutCount
+    };
+  });
+}
+
+function renderMonthlySummaryTable() {
+  const tbody = document.getElementById('admin-summary-tbody');
+  const monthInput = document.getElementById('summary-month-input');
+  if (!tbody || !monthInput) return;
+
+  const monthKey = monthInput.value || getVnDateKey().slice(0, 7);
+  if (!monthInput.value) monthInput.value = monthKey;
+
+  const rows = computeMonthlySummary(monthKey);
+
+  // Cập nhật 4 thẻ tổng kết nhanh toàn đội
+  let totNormal = 0, totCrm = 0, totOt = 0, totHol = 0, totLate = 0, totEarly = 0, totForgot = 0;
+  rows.forEach(r => {
+    totNormal += r.normalDays;
+    totCrm += r.crmDays;
+    totOt += r.overtimeShifts;
+    totHol += r.holidayShifts;
+    totLate += r.lateCount;
+    totEarly += r.earlyCount;
+    totForgot += r.forgotOutCount;
+  });
+
+  const elNorm = document.getElementById('sum-total-normal');
+  const elCrm = document.getElementById('sum-total-crm');
+  const elOtHol = document.getElementById('sum-total-ot-hol');
+  const elAlerts = document.getElementById('sum-total-alerts');
+  if (elNorm) elNorm.textContent = totNormal;
+  if (elCrm) elCrm.textContent = totCrm;
+  if (elOtHol) elOtHol.textContent = `${totOt} / ${totHol}`;
+  if (elAlerts) elAlerts.textContent = `${totLate} / ${totEarly} / ${totForgot}`;
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="padding: 24px; color: var(--text-dim);">Chưa có dữ liệu nhân sự cho tháng ${escapeHtml(monthKey)}.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const roleTag = r.user.role === 'admin'
+      ? '<span class="badge badge-admin" style="font-size: 0.65rem; margin-left: 4px;">Admin</span>'
+      : (r.user.role === 'leader' ? '<span class="badge badge-leader" style="font-size: 0.65rem; margin-left: 4px;">Tổ trưởng</span>' : '');
+
+    const alertParts = [];
+    if (r.lateCount > 0) alertParts.push(`<span class="badge badge-late">⏰ Muộn ${r.lateCount} (${formatMinutesShort(r.lateMinutes)})</span>`);
+    if (r.earlyCount > 0) alertParts.push(`<span class="badge badge-early">⚠️ Sớm ${r.earlyCount} (${formatMinutesShort(r.earlyMinutes)})</span>`);
+    if (r.forgotOutCount > 0) alertParts.push(`<span class="badge badge-pending">❓ Quên ra ${r.forgotOutCount}</span>`);
+
+    return `
+      <tr>
+        <td>
+          <div><b>${escapeHtml(r.user.name)}</b> ${roleTag}</div>
+          <small style="color: var(--text-dim);"><code>${escapeHtml(r.user.phone)}</code></small>
+        </td>
+        <td>
+          <div class="summary-cell-main text-success">${r.normalDays} ngày</div>
+          <div class="summary-cell-sub">${r.normalHours} giờ</div>
+        </td>
+        <td>
+          <div class="summary-cell-main" style="color: #7dd3fc;">${r.crmDays} ngày</div>
+          <div class="summary-cell-sub">${r.crmHours > 0 ? r.crmHours + ' giờ' : 'Cả ngày'}</div>
+        </td>
+        <td>
+          <div class="summary-cell-main text-amber">${r.overtimeShifts} ca</div>
+          <div class="summary-cell-sub">${r.overtimeHours} giờ</div>
+        </td>
+        <td>
+          <div class="summary-cell-main" style="color: #d8b4fe;">${r.holidayShifts} ca</div>
+          <div class="summary-cell-sub">${r.holidayHours} giờ</div>
+        </td>
+        <td>
+          <div class="summary-cell-main">${r.approvedLeaveDays} ngày</div>
+          <div class="summary-cell-sub">Đã duyệt OK</div>
+        </td>
+        <td>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+            ${alertParts.length > 0 ? alertParts.join('') : '<span style="color: #34d399; font-size: 0.8rem;">✓ Chuẩn giờ</span>'}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+document.getElementById('summary-month-input').addEventListener('change', renderMonthlySummaryTable);
+document.getElementById('btn-summary-refresh').addEventListener('click', loadAdminData);
+
+document.getElementById('btn-export-summary-csv').addEventListener('click', () => {
+  const monthKey = document.getElementById('summary-month-input').value || getVnDateKey().slice(0, 7);
+  const rows = computeMonthlySummary(monthKey);
+  if (!rows || rows.length === 0) {
+    return showToast('Chưa có dữ liệu tổng hợp tháng để xuất Excel.', 'info');
+  }
+
+  let csv = '\uFEFF';
+  csv += 'STT,Họ và Tên,Số Điện Thoại,Vai Trò,Ngày Công Thường,Tổng Giờ Thường,Ngày Trực CRM,Giờ Trực CRM,Số Ca Tăng Ca,Tổng Giờ Tăng Ca,Số Ca Trực Lễ,Tổng Giờ Trực Lễ,Ngày Nghỉ Phép (Đã Duyệt),Số Lần Đi Muộn (>07:30),Tổng Phút Muộn,Số Lần Về Sớm (<18:30),Tổng Phút Sớm,Quên Chấm Ra Ca\n';
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+  rows.forEach((r, idx) => {
+    csv += `${idx + 1},${esc(r.user.name)},${r.user.phone},${esc(getRoleLabel(r.user.role))},${r.normalDays},${r.normalHours},${r.crmDays},${r.crmHours},${r.overtimeShifts},${r.overtimeHours},${r.holidayShifts},${r.holidayHours},${r.approvedLeaveDays},${r.lateCount},${r.lateMinutes},${r.earlyCount},${r.earlyMinutes},${r.forgotOutCount}\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `bang-cong-tong-hop-${monthKey}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast(`✅ Đã tải file Excel Tổng hợp tháng ${monthKey}!`, 'success');
 });
 
 // --- Dọn ảnh / Dọn hẳn dòng dữ liệu chấm công ---
 function openCleanupModal() {
+  if (!isAdmin()) {
+    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được dọn dữ liệu/ảnh!', 'error');
+  }
   document.getElementById('modal-cleanup-photos').classList.add('show');
 }
 
 document.getElementById('form-cleanup-photos').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền dọn dữ liệu/ảnh!', 'error');
+  }
   const mode = document.getElementById('cleanup-mode-select').value;
   const rawVal = document.getElementById('cleanup-days-select').value;
   const days = Number(rawVal);
@@ -2429,6 +3263,7 @@ function renderAdminRequestsList() {
     return;
   }
 
+  const adminOnly = isAdmin();
   listEl.innerHTML = filtered.map(r => `
     <div class="request-card">
       <div class="request-card-top">
@@ -2452,16 +3287,20 @@ function renderAdminRequestsList() {
       <div class="request-card-footer">
         <span>Gửi lúc: ${escapeHtml(r.created_time_str || getVnTimeStr(r.created_at))}${r.reviewed_time_str ? ' • Xử lý lúc: ' + escapeHtml(r.reviewed_time_str) : ''}</span>
         <div class="action-btns">
-          ${r.status !== 'approved' ? `
-            <button class="btn-sm btn-unlock" data-review-id="${escapeHtml(r.id)}" data-decision="approved">
-              ✅ Duyệt OK
-            </button>
-          ` : ''}
-          ${r.status !== 'rejected' ? `
-            <button class="btn-sm btn-lock" data-review-id="${escapeHtml(r.id)}" data-decision="rejected">
-              ❌ Từ chối
-            </button>
-          ` : ''}
+          ${adminOnly ? `
+            ${r.status !== 'approved' ? `
+              <button class="btn-sm btn-unlock" data-review-id="${escapeHtml(r.id)}" data-decision="approved">
+                ✅ Duyệt OK
+              </button>
+            ` : ''}
+            ${r.status !== 'rejected' ? `
+              <button class="btn-sm btn-lock" data-review-id="${escapeHtml(r.id)}" data-decision="rejected">
+                ❌ Từ chối
+              </button>
+            ` : ''}
+          ` : `
+            <span class="readonly-tag">👁️ Chỉ xem (Admin duyệt)</span>
+          `}
         </div>
       </div>
     </div>
@@ -2475,6 +3314,9 @@ function renderAdminRequestsList() {
 }
 
 function openReviewRequestModal(reqId, decision) {
+  if (!isAdmin()) {
+    return showToast('Tài khoản Tổ trưởng chỉ được xem đơn, không có quyền duyệt/từ chối!', 'error');
+  }
   const req = state.adminRequestsCache.find(r => r.id === reqId);
   if (!req) return;
 
@@ -2504,6 +3346,9 @@ function openReviewRequestModal(reqId, decision) {
 
 document.getElementById('form-review-request').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền duyệt hoặc từ chối đơn!', 'error');
+  }
   const reqId = document.getElementById('review-req-id').value;
   const decision = document.getElementById('review-req-decision').value;
   const adminNote = document.getElementById('review-admin-note').value.trim();
@@ -2562,6 +3407,7 @@ document.getElementById('btn-export-requests-csv').addEventListener('click', () 
 
 // --- BẢNG NHÂN SỰ (TỐI ĐA 30 NGƯỜI) ---
 function renderAdminStaffTable(lastPunchMap = null) {
+  if (!isAdmin()) return;
   const tbody = document.getElementById('admin-staff-tbody');
   const users = state.allUsersList;
 
@@ -2598,6 +3444,15 @@ function renderAdminStaffTable(lastPunchMap = null) {
       : `<span style="color: var(--text-dim); font-size: 0.8rem;">Chưa vào ca</span>`;
 
     const isCurrentAdmin = state.user && state.user.phone === u.phone;
+    const roleCellHtml = isCurrentAdmin
+      ? `<span class="badge badge-admin">👑 Quản lý (Admin)</span>`
+      : `
+        <select class="staff-role-select" data-role-phone="${escapeHtml(u.phone)}" data-role-name="${escapeHtml(u.name)}" data-prev-role="${escapeHtml(u.role || 'employee')}" title="Đổi vai trò tài khoản này">
+          <option value="employee" ${u.role === 'employee' || !u.role ? 'selected' : ''}>👤 Nhân viên</option>
+          <option value="leader" ${u.role === 'leader' ? 'selected' : ''}>👁️ Tổ trưởng (Chỉ xem)</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>👑 Quản lý (Admin)</option>
+        </select>
+      `;
 
     return `
       <tr>
@@ -2606,11 +3461,7 @@ function renderAdminStaffTable(lastPunchMap = null) {
           ${isCurrentAdmin ? '<small style="color: #60a5fa;"> (Bạn)</small>' : ''}
         </td>
         <td><code>${escapeHtml(u.phone)}</code></td>
-        <td>
-          <span class="badge ${u.role === 'admin' ? 'badge-admin' : ''}" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd;">
-            ${u.role === 'admin' ? '👑 Quản lý' : 'Nhân viên'}
-          </span>
-        </td>
+        <td>${roleCellHtml}</td>
         <td>${shiftBadge}</td>
         <td>${statusBadge}</td>
         <td>
@@ -2634,6 +3485,40 @@ function renderAdminStaffTable(lastPunchMap = null) {
       </tr>
     `;
   }).join('');
+
+  tbody.querySelectorAll('select[data-role-phone]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      if (!isAdmin()) return;
+      const phone = sel.dataset.rolePhone;
+      const name = sel.dataset.roleName;
+      const prevRole = sel.dataset.prevRole || 'employee';
+      const newRole = ['admin', 'leader', 'employee'].includes(sel.value) ? sel.value : 'employee';
+      if (newRole === prevRole) return;
+
+      const labelMap = {
+        admin: 'Quản lý (Admin toàn quyền)',
+        leader: 'Tổ trưởng (Chỉ xem công, ảnh & đơn)',
+        employee: 'Nhân viên thông thường'
+      };
+      if (!confirm(`Đổi vai trò của "${name}" (${phone})\nsang: ${labelMap[newRole]}?`)) {
+        sel.value = prevRole;
+        return;
+      }
+      sel.disabled = true;
+      try {
+        await DB.updateUser(phone, { role: newRole });
+        sel.dataset.prevRole = newRole;
+        playSuccessSound();
+        showToast(`✅ Đã đổi "${name}" sang vai trò ${labelMap[newRole]}!`, 'success');
+        await loadAdminData();
+      } catch (err) {
+        sel.value = prevRole;
+        showToast('Lỗi đổi vai trò: ' + err.message, 'error');
+      } finally {
+        sel.disabled = false;
+      }
+    });
+  });
 
   tbody.querySelectorAll('button[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2665,7 +3550,10 @@ function getCurrentVnTimeHHMM() {
   return parts; // HH:mm
 }
 
-function openAdminPunchModal(preselectPhone = null) {
+function openAdminPunchModal(preselectPhone = null, preset = null) {
+  if (!isAdmin()) {
+    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được chấm bù!', 'error');
+  }
   const userSel = document.getElementById('manual-user-select');
   if (!state.allUsersList || state.allUsersList.length === 0) {
     return showToast('Chưa tải được danh sách nhân viên.', 'error');
@@ -2679,14 +3567,18 @@ function openAdminPunchModal(preselectPhone = null) {
     userSel.value = preselectPhone;
   }
 
-  // Tự gợi ý Vào ca hay Ra ca dựa theo lần chấm gần nhất của nhân viên đó
+  // Tự gợi ý Vào ca hay Ra ca dựa theo preset (nếu có) hoặc lần chấm gần nhất
   const selectedPhone = userSel.value;
   const lastRec = state.adminRecordsCache.find(r => r.user_id === selectedPhone);
-  document.getElementById('manual-type-select').value = (lastRec && lastRec.type === 'IN') ? 'OUT' : 'IN';
-  document.getElementById('manual-shift-mode').value = (lastRec && lastRec.type === 'IN' && lastRec.shift_mode) ? lastRec.shift_mode : 'normal';
-  document.getElementById('manual-date').value = getVnDateKey();
-  document.getElementById('manual-time').value = getCurrentVnTimeHHMM();
-  document.getElementById('manual-note').value = 'Admin chấm bù (nhân viên quên chấm)';
+  document.getElementById('manual-type-select').value = (preset && preset.type)
+    ? preset.type
+    : ((lastRec && lastRec.type === 'IN') ? 'OUT' : 'IN');
+  document.getElementById('manual-shift-mode').value = (preset && preset.shiftMode)
+    ? preset.shiftMode
+    : ((lastRec && lastRec.type === 'IN' && lastRec.shift_mode) ? lastRec.shift_mode : 'normal');
+  document.getElementById('manual-date').value = (preset && preset.date) ? preset.date : getVnDateKey();
+  document.getElementById('manual-time').value = (preset && preset.time) ? preset.time : getCurrentVnTimeHHMM();
+  document.getElementById('manual-note').value = (preset && preset.note) ? preset.note : 'Admin chấm bù (nhân viên quên chấm)';
 
   document.getElementById('modal-admin-punch').classList.add('show');
 }
@@ -2778,17 +3670,19 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
   }
 
   let csv = '\uFEFF';
-  csv += 'STT,Họ và Tên,Số Điện Thoại,Hành Động,Chế Độ Ca,Nguồn Chấm,Thời Gian,Khoảng Cách Công Ty (m),Trạng Thái Vị Trí,Ghi Chú,Vĩ Độ,Kinh Độ,Sai Số (m),Link Google Maps,Link Ảnh Google Drive\n';
+  csv += 'STT,Họ và Tên,Số Điện Thoại,Hành Động,Chế Độ Ca,Trạng Thái Giờ (07:30-18:30),Nguồn Chấm,Thời Gian,Khoảng Cách Công Ty (m),Trạng Thái Vị Trí,Ghi Chú,Vĩ Độ,Kinh Độ,Sai Số (m),Link Google Maps,Link Ảnh Google Drive\n';
   rows.forEach((r, idx) => {
     const typeStr = r.type === 'IN' ? 'Vào ca' : 'Ra ca';
     const modeStr = getShiftModeLabel(r.shift_mode);
+    const punct = getPunctualityInfo(r);
+    const punctStr = punct ? punct.label : ((r.shift_mode && r.shift_mode !== 'normal') ? 'Ca đặc thù' : 'Đúng giờ');
     const sourceStr = r.is_manual ? `Admin chấm bù (${r.created_by_admin || 'Admin'})` : 'Nhân viên tự chấm';
     const distM = getRecordDistance(r);
     const zoneStr = distM <= state.officeRadius ? 'Tại công ty' : 'Ngoài phạm vi';
     const mapUrl = `https://www.google.com/maps?q=${r.latitude},${r.longitude}`;
     const esc = v => `"${String(v || '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
     const photoCol = r.photo_drive_view_url ? r.photo_drive_view_url : (r.has_photo ? 'Lưu trên Firebase' : 'Không');
-    csv += `${idx + 1},${esc(r.user_name)},${r.user_phone},${typeStr},${modeStr},${esc(sourceStr)},${esc(r.datetime_str)},${distM},${esc(zoneStr)},${esc(r.note)},${r.latitude},${r.longitude},${r.accuracy},"${mapUrl}",${esc(photoCol)}\n`;
+    csv += `${idx + 1},${esc(r.user_name)},${r.user_phone},${typeStr},${modeStr},${esc(punctStr)},${esc(sourceStr)},${esc(r.datetime_str)},${distM},${esc(zoneStr)},${esc(r.note)},${r.latitude},${r.longitude},${r.accuracy},"${mapUrl}",${esc(photoCol)}\n`;
   });
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -2805,6 +3699,9 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
 
 // --- Thêm nhân viên (tối đa 30 người) ---
 function openAddUserModal() {
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền thêm nhân sự!', 'error');
+  }
   if (state.allUsersList.length >= MAX_USERS) {
     return showToast(`Đã đạt giới hạn tối đa ${MAX_USERS} nhân sự!`, 'error');
   }
@@ -2814,10 +3711,14 @@ function openAddUserModal() {
 
 document.getElementById('form-add-user').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền thêm nhân sự!', 'error');
+  }
   const name = document.getElementById('add-user-name').value.trim();
   const phone = document.getElementById('add-user-phone').value.trim();
   const pin = document.getElementById('add-user-pin').value.trim();
-  const role = document.getElementById('add-user-role').value === 'admin' ? 'admin' : 'employee';
+  const rawRole = document.getElementById('add-user-role').value;
+  const role = ['admin', 'leader', 'employee'].includes(rawRole) ? rawRole : 'employee';
 
   if (!name) return showToast('Họ tên nhân viên không được để trống!', 'error');
   if (!/^\d{9,11}$/.test(phone)) return showToast('Số điện thoại phải từ 9 đến 11 chữ số!', 'error');
@@ -2859,6 +3760,9 @@ document.getElementById('form-add-user').addEventListener('submit', async (e) =>
 
 // --- Đổi PIN ---
 function openChangePinModal(phone, userName) {
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền đổi PIN nhân sự!', 'error');
+  }
   document.getElementById('change-pin-user-id').value = phone;
   document.getElementById('change-pin-user-name').value = `${userName} (${phone})`;
   document.getElementById('change-pin-val').value = '';
@@ -2867,6 +3771,9 @@ function openChangePinModal(phone, userName) {
 
 document.getElementById('form-change-pin').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền đổi PIN nhân sự!', 'error');
+  }
   const phone = document.getElementById('change-pin-user-id').value;
   const pin = document.getElementById('change-pin-val').value.trim();
 
@@ -2893,6 +3800,9 @@ document.getElementById('form-change-pin').addEventListener('submit', async (e) 
 
 // --- Khóa / Mở khóa ---
 async function toggleLockUser(phone) {
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền khóa/mở khóa tài khoản!', 'error');
+  }
   if (state.user && state.user.phone === phone) {
     return showToast('Bạn không thể tự khóa tài khoản của chính mình.', 'error');
   }
@@ -2920,6 +3830,9 @@ async function toggleLockUser(phone) {
 
 // --- Xóa nhân viên ---
 async function deleteUser(phone, userName) {
+  if (!isAdmin()) {
+    return showToast('Chỉ Admin mới có quyền xóa nhân viên!', 'error');
+  }
   if (!confirm(`Bạn có chắc chắn muốn xóa nhân viên "${userName}"?\nToàn bộ lịch sử chấm công và đơn từ của người này sẽ bị xóa vĩnh viễn.`)) {
     return;
   }
@@ -3129,6 +4042,7 @@ window.openPhotoViewer = openPhotoViewer;
 window.openCleanupModal = openCleanupModal;
 window.selectShiftMode = selectShiftMode;
 window.openAdminPunchModal = openAdminPunchModal;
+window.setQuickWorkNote = setQuickWorkNote;
 window.handleInstallAppClick = handleInstallAppClick;
 window.openInstallModal = openInstallModal;
 window.switchInstallGuideTab = switchInstallGuideTab;
