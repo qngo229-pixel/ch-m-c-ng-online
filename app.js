@@ -352,6 +352,8 @@ const DB = {
 
 // Tự động tạo tài khoản Quản lý ban đầu nếu CSDL còn trống
 async function ensureDefaultAdmin() {
+  const banner = document.getElementById('cloud-status-banner');
+  const bannerText = document.getElementById('cloud-status-text');
   try {
     const users = await DB.getAllUsers();
     if (users.length === 0) {
@@ -371,7 +373,19 @@ async function ensureDefaultAdmin() {
       });
     }
   } catch (err) {
-    console.error('Lỗi khởi tạo Admin mặc định:', err);
+    console.error('Lỗi kết nối/khởi tạo Firestore:', err);
+    if (dbMode === 'firebase' && banner && bannerText) {
+      banner.classList.remove('hidden');
+      const code = err.code || '';
+      const msg = err.message || '';
+      if (code === 'permission-denied' || msg.includes('Missing or insufficient permissions')) {
+        bannerText.textContent = '⚠️ Firebase Firestore đang chặn quyền đọc/ghi. Vào Firebase Console → Firestore Database → tab Rules → cập nhật Rules rồi bấm Publish.';
+      } else if (code === 'not-found' || msg.includes('does not exist')) {
+        bannerText.textContent = '⚠️ Chưa bật Firestore Database. Vào Firebase Console → Build → Firestore Database → bấm Create database.';
+      } else {
+        bannerText.textContent = '⚠️ Lỗi kết nối Firebase Firestore: ' + msg;
+      }
+    }
   }
 }
 
