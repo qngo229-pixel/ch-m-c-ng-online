@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chamcong-ghpages-v5';
+const CACHE_NAME = 'chamcong-ghpages-v14';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -18,7 +18,6 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Luôn ưu tiên mạng để nhận giao diện mới nhất
   e.respondWith(
     fetch(e.request).catch(() => caches.match(e.request))
   );
