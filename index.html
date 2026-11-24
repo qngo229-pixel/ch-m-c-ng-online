@@ -9,10 +9,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Chấm Công">
-  <link rel="apple-touch-icon" href="./icon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
   <link rel="icon" type="image/svg+xml" href="./icon.svg">
-  <link rel="manifest" href="./manifest.json">
-  <link rel="stylesheet" href="./styles.css?v=11">
+  <link rel="manifest" href="./manifest.json?v=15">
+  <link rel="stylesheet" href="./styles.css?v=15">
 </head>
 <body>
 
@@ -27,18 +28,24 @@
         </div>
       </div>
 
-      <!-- Header User info (shown when logged in) -->
-      <div id="header-user" class="header-user hidden">
-        <div class="user-badge">
-          <span id="header-user-name" class="user-name"></span>
-          <span id="header-user-role" class="user-role"></span>
+      <div class="header-right">
+        <button id="btn-header-install" type="button" class="btn-install-pill hidden" onclick="handleInstallAppClick()" title="Cài app ra màn hình điện thoại">
+          📲 <span>Cài app</span>
+        </button>
+
+        <!-- Header User info (shown when logged in) -->
+        <div id="header-user" class="header-user hidden">
+          <div class="user-badge">
+            <span id="header-user-name" class="user-name"></span>
+            <span id="header-user-role" class="user-role"></span>
+          </div>
+          <button id="btn-toggle-admin-view" class="btn-secondary hidden" style="padding: 6px 11px; font-size: 0.78rem;">
+            ⚙️ Quản lý
+          </button>
+          <button id="btn-logout" class="btn-secondary" style="padding: 6px 11px; font-size: 0.78rem;" title="Đăng xuất">
+            🚪 Thoát
+          </button>
         </div>
-        <button id="btn-toggle-admin-view" class="btn-secondary hidden" style="padding: 6px 11px; font-size: 0.78rem;">
-          ⚙️ Quản lý
-        </button>
-        <button id="btn-logout" class="btn-secondary" style="padding: 6px 11px; font-size: 0.78rem;" title="Đăng xuất">
-          🚪 Thoát
-        </button>
       </div>
     </div>
   </header>
@@ -91,6 +98,20 @@
             <span>ĐĂNG NHẬP</span> ➔
           </button>
         </form>
+      </div>
+
+      <!-- Gợi ý cài ra màn hình điện thoại (tự ẩn khi đã cài thành app) -->
+      <div id="login-install-card" class="install-promo-card hidden">
+        <div class="install-promo-left">
+          <div class="install-promo-icon">📲</div>
+          <div class="install-promo-text">
+            <div class="install-promo-title">Cài ra màn hình điện thoại</div>
+            <div id="login-install-sub" class="install-promo-sub">Mở 1 chạm như app thật • Hỗ trợ Android & iPhone</div>
+          </div>
+        </div>
+        <button type="button" id="btn-login-install" class="btn-install-action" onclick="handleInstallAppClick()">
+          Cài ngay
+        </button>
       </div>
     </div>
 
@@ -150,7 +171,10 @@
             <a id="office-map-pill" href="https://www.google.com/maps?q=18.78474399853969,105.33180761722444" target="_blank" class="office-pill" title="Xem vị trí công ty trên Google Maps">
               🏢 Vị trí công ty (Bán kính <span id="office-radius-label">200m</span>)
             </a>
-            <a href="javascript:void(0)" onclick="openGpsModal()" style="color: #60a5fa; text-decoration: underline;">Hướng dẫn GPS</a>
+            <div class="punch-hint-links">
+              <a href="javascript:void(0)" onclick="openGpsModal()" style="color: #60a5fa; text-decoration: underline;">Hướng dẫn GPS</a>
+              <a id="link-install-app" href="javascript:void(0)" onclick="handleInstallAppClick()" class="hidden" style="color: #34d399; text-decoration: underline;">📲 Cài ra màn hình</a>
+            </div>
           </div>
         </div>
 
@@ -805,10 +829,109 @@
     </div>
   </div>
 
+  <!-- ==================================================== -->
+  <!-- MODAL 9: CÀI APP RA MÀN HÌNH ĐIỆN THOẠI (PWA)        -->
+  <!-- ==================================================== -->
+  <div id="modal-install-app" class="modal-overlay" onclick="closeModal('modal-install-app')">
+    <div class="modal-box install-modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="modal-title">📲 Cài App Ra Màn Hình Chính</h3>
+        <button class="modal-close" onclick="closeModal('modal-install-app')">&times;</button>
+      </div>
+
+      <!-- Cảnh báo nếu đang mở bằng trình duyệt trong Zalo / Facebook -->
+      <div id="install-inapp-warning" class="alert alert-warning hidden" style="font-size: 0.84rem; margin-bottom: 14px;">
+        <span>⚠️</span>
+        <span>Bạn đang mở link bên trong <b>Zalo / Facebook</b>. Hãy bấm dấu <b>⋮</b> hoặc <b>•••</b> ở góc trên → chọn <b>Mở bằng trình duyệt (Safari / Chrome)</b>, hoặc sao chép link bên dưới rồi dán vào Safari/Chrome để cài ra màn hình chính.</span>
+      </div>
+
+      <!-- Khung cài 1 chạm cho Android / Chrome / Edge khi trình duyệt hỗ trợ -->
+      <div id="install-native-box" class="install-native-box hidden">
+        <p class="install-native-desc">Thiết bị của bạn hỗ trợ cài đặt nhanh chỉ với 1 chạm — biểu tượng <b>Chấm Công</b> sẽ hiện ngay trên màn hình chính!</p>
+        <button type="button" id="btn-trigger-native-install" class="btn-primary" onclick="triggerNativeInstall()">
+          <span>📲 CÀI ĐẶT NGAY (1 CHẠM)</span>
+        </button>
+      </div>
+
+      <!-- Chọn loại thiết bị -->
+      <div class="install-device-tabs">
+        <button type="button" id="install-tab-ios" class="install-tab-btn" onclick="switchInstallGuideTab('ios')">
+          🍎 iPhone / iPad
+        </button>
+        <button type="button" id="install-tab-android" class="install-tab-btn" onclick="switchInstallGuideTab('android')">
+          🤖 Android
+        </button>
+        <button type="button" id="install-tab-desktop" class="install-tab-btn" onclick="switchInstallGuideTab('desktop')">
+          💻 Máy tính
+        </button>
+      </div>
+
+      <!-- Hướng dẫn iPhone / iPad -->
+      <div id="install-guide-ios" class="install-guide-panel hidden">
+        <div class="install-step">
+          <div class="install-step-num">1</div>
+          <div class="install-step-text">Mở đường link này bằng trình duyệt <b>Safari</b> (biểu tượng la bàn màu xanh trên iPhone).</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">2</div>
+          <div class="install-step-text">Bấm vào nút <b>Chia sẻ</b> (biểu tượng <b>ô vuông có mũi tên chỉ lên ⬆️</b>) ở thanh dưới cùng màn hình.</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">3</div>
+          <div class="install-step-text">Vuốt danh sách xuống rồi chọn <b>➕ Thêm vào MH chính</b> <i>(Add to Home Screen)</i>.</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">4</div>
+          <div class="install-step-text">Bấm <b>Thêm</b> <i>(Add)</i> ở góc trên bên phải — biểu tượng <b>Chấm Công</b> sẽ xuất hiện ngay ngoài màn hình!</div>
+        </div>
+      </div>
+
+      <!-- Hướng dẫn Android -->
+      <div id="install-guide-android" class="install-guide-panel hidden">
+        <div class="install-step">
+          <div class="install-step-num">1</div>
+          <div class="install-step-text">Mở link bằng trình duyệt <b>Google Chrome</b> (hoặc Cốc Cốc / Samsung Internet).</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">2</div>
+          <div class="install-step-text">Bấm nút <b>Cài đặt ngay (1 chạm)</b> màu xanh ở trên (nếu có), hoặc bấm dấu <b>3 chấm dọc (⋮)</b> ở góc trên phải trình duyệt.</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">3</div>
+          <div class="install-step-text">Chọn <b>Thêm vào Màn hình chính</b> <i>(Add to Home screen)</i> hoặc <b>Cài đặt ứng dụng</b> <i>(Install app)</i> → bấm <b>Cài đặt</b>.</div>
+        </div>
+      </div>
+
+      <!-- Hướng dẫn Máy tính -->
+      <div id="install-guide-desktop" class="install-guide-panel hidden">
+        <div class="install-step">
+          <div class="install-step-num">1</div>
+          <div class="install-step-text">Mở trang bằng <b>Google Chrome</b> hoặc <b>Microsoft Edge</b>.</div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">2</div>
+          <div class="install-step-text">Bấm nút <b>Cài đặt ngay</b> ở trên, hoặc bấm biểu tượng <b>Cài đặt (màn hình có mũi tên xuống)</b> ở góc phải thanh địa chỉ web.</div>
+        </div>
+      </div>
+
+      <!-- Tiện ích sao chép link nhanh -->
+      <div class="install-copy-bar">
+        <span id="install-app-url-text" class="install-url-text"></span>
+        <button type="button" class="btn-secondary" style="padding: 6px 11px; font-size: 0.78rem; white-space: nowrap;" onclick="copyAppInstallLink()">
+          📋 Chép link
+        </button>
+      </div>
+
+      <div class="modal-footer" style="margin-top: 14px;">
+        <button type="button" class="btn-secondary" onclick="closeModal('modal-install-app')">Đã hiểu</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST CONTAINER -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="./firebase-config.js?v=14"></script>
-  <script type="module" src="./app.js?v=14"></script>
+  <script src="./firebase-config.js?v=15"></script>
+  <script type="module" src="./app.js?v=15"></script>
 </body>
 </html>

@@ -2942,6 +2942,177 @@ function openGpsModal() {
   document.getElementById('modal-gps-help').classList.add('show');
 }
 
+// ==========================================
+// 11B. CÀI APP RA MÀN HÌNH ĐIỆN THOẠI (PWA INSTALL - ANDROID 1 CHẠM & IPHONE)
+// ==========================================
+let deferredInstallPrompt = null;
+
+function isStandaloneMode() {
+  return Boolean(
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+    window.navigator.standalone === true ||
+    document.referrer.startsWith('android-app://')
+  );
+}
+
+function detectInstallPlatform() {
+  const ua = navigator.userAgent || '';
+  const isIos = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  const isInAppBrowser = /Zalo|FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|TikTok/i.test(ua);
+  const platform = isIos ? 'ios' : (isAndroid ? 'android' : 'desktop');
+  return { platform, isIos, isAndroid, isInAppBrowser };
+}
+
+function getCleanAppUrl() {
+  return window.location.origin + window.location.pathname;
+}
+
+function updateInstallUI() {
+  const headerBtn = document.getElementById('btn-header-install');
+  const loginCard = document.getElementById('login-install-card');
+  const punchLink = document.getElementById('link-install-app');
+  const loginSub = document.getElementById('login-install-sub');
+  const loginBtn = document.getElementById('btn-login-install');
+  const nativeBox = document.getElementById('install-native-box');
+
+  if (isStandaloneMode()) {
+    if (headerBtn) headerBtn.classList.add('hidden');
+    if (loginCard) loginCard.classList.add('hidden');
+    if (punchLink) punchLink.classList.add('hidden');
+    if (nativeBox) nativeBox.classList.add('hidden');
+    return;
+  }
+
+  if (headerBtn) headerBtn.classList.remove('hidden');
+  if (loginCard) loginCard.classList.remove('hidden');
+  if (punchLink) punchLink.classList.remove('hidden');
+
+  const { isIos, isInAppBrowser } = detectInstallPlatform();
+  if (deferredInstallPrompt && !isInAppBrowser) {
+    if (loginSub) loginSub.textContent = 'Bấm 1 chạm để cài trực tiếp ra màn hình chính!';
+    if (loginBtn) loginBtn.textContent = '📲 Cài 1 chạm';
+    if (nativeBox) nativeBox.classList.remove('hidden');
+  } else if (isInAppBrowser) {
+    if (loginSub) loginSub.textContent = 'Mở bằng Safari / Chrome để lưu ra màn hình điện thoại';
+    if (loginBtn) loginBtn.textContent = 'Xem cách cài';
+    if (nativeBox) nativeBox.classList.add('hidden');
+  } else if (isIos) {
+    if (loginSub) loginSub.textContent = 'Xem hướng dẫn 3 bước lưu ra màn hình iPhone';
+    if (loginBtn) loginBtn.textContent = 'Xem cách cài';
+    if (nativeBox) nativeBox.classList.add('hidden');
+  } else {
+    if (loginSub) loginSub.textContent = 'Mở 1 chạm như app thật • Hỗ trợ Android & iPhone';
+    if (loginBtn) loginBtn.textContent = 'Cài ngay';
+    if (nativeBox) nativeBox.classList.add('hidden');
+  }
+}
+
+function switchInstallGuideTab(tabName) {
+  const tabs = ['ios', 'android', 'desktop'];
+  tabs.forEach(t => {
+    const btn = document.getElementById(`install-tab-${t}`);
+    const panel = document.getElementById(`install-guide-${t}`);
+    if (btn) btn.classList.toggle('active', t === tabName);
+    if (panel) panel.classList.toggle('hidden', t !== tabName);
+  });
+}
+
+function openInstallModal() {
+  const { platform, isInAppBrowser } = detectInstallPlatform();
+  const inAppWarn = document.getElementById('install-inapp-warning');
+  const nativeBox = document.getElementById('install-native-box');
+  const urlText = document.getElementById('install-app-url-text');
+
+  if (urlText) urlText.textContent = getCleanAppUrl();
+  if (inAppWarn) inAppWarn.classList.toggle('hidden', !isInAppBrowser);
+  if (nativeBox) nativeBox.classList.toggle('hidden', !(deferredInstallPrompt && !isInAppBrowser));
+
+  switchInstallGuideTab(platform);
+  document.getElementById('modal-install-app').classList.add('show');
+}
+
+async function triggerNativeInstall() {
+  if (!deferredInstallPrompt) {
+    openInstallModal();
+    return;
+  }
+  try {
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    await promptEvent.prompt();
+    const choice = await promptEvent.userChoice;
+    if (choice && choice.outcome === 'accepted') {
+      closeModal('modal-install-app');
+      showToast('🎉 Đang cài Chấm Công ra màn hình chính!', 'success');
+    }
+  } catch (err) {
+    console.warn('PWA install prompt error:', err);
+    openInstallModal();
+  } finally {
+    updateInstallUI();
+  }
+}
+
+async function handleInstallAppClick() {
+  if (isStandaloneMode()) {
+    showToast('Ứng dụng đã được cài sẵn trên màn hình chính rồi!', 'info');
+    return;
+  }
+  const { isInAppBrowser } = detectInstallPlatform();
+  if (deferredInstallPrompt && !isInAppBrowser) {
+    await triggerNativeInstall();
+    return;
+  }
+  openInstallModal();
+}
+
+async function copyAppInstallLink() {
+  const url = getCleanAppUrl();
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    showToast('✅ Đã sao chép link app! Dán vào Safari hoặc Chrome để cài.', 'success');
+  } catch {
+    showToast('Không thể tự sao chép, bạn hãy copy đường link trên thanh địa chỉ.', 'error');
+  }
+}
+
+// Bắt sự kiện cài app PWA sớm nhất có thể (tránh bỏ lỡ trước DOMContentLoaded)
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  updateInstallUI();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  closeModal('modal-install-app');
+  updateInstallUI();
+  showToast('🎉 Đã cài Chấm Công ra màn hình chính thành công!', 'success');
+});
+
+function initPwaInstall() {
+  try {
+    const mq = window.matchMedia('(display-mode: standalone)');
+    if (mq && mq.addEventListener) {
+      mq.addEventListener('change', updateInstallUI);
+    }
+  } catch {}
+
+  updateInstallUI();
+}
+
 // Gắn các hàm gọi từ HTML onclick vào window (vì script là ES module)
 window.openGpsModal = openGpsModal;
 window.closeModal = closeModal;
@@ -2958,12 +3129,18 @@ window.openPhotoViewer = openPhotoViewer;
 window.openCleanupModal = openCleanupModal;
 window.selectShiftMode = selectShiftMode;
 window.openAdminPunchModal = openAdminPunchModal;
+window.handleInstallAppClick = handleInstallAppClick;
+window.openInstallModal = openInstallModal;
+window.switchInstallGuideTab = switchInstallGuideTab;
+window.triggerNativeInstall = triggerNativeInstall;
+window.copyAppInstallLink = copyAppInstallLink;
 
 // ==========================================
 // 12. KHỞI TẠO ỨNG DỤNG (AUTO-LOGIN 30 NGÀY)
 // ==========================================
 async function initApp() {
   initClock();
+  initPwaInstall();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => {});
