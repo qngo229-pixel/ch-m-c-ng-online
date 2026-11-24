@@ -12,8 +12,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=21">
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=21">
   <link rel="icon" type="image/svg+xml" href="./icon.svg?v=21">
-  <link rel="manifest" href="./manifest.json?v=21">
-  <link rel="stylesheet" href="./styles.css?v=21">
+  <link rel="manifest" href="./manifest.json?v=22">
+  <link rel="stylesheet" href="./styles.css?v=22">
 </head>
 <body>
 
@@ -46,14 +46,18 @@
       <div class="brand">
         <div class="brand-icon evn-emblem-badge" title="Điện lực Việt Nam - EVNNPC">
           <svg viewBox="0 0 100 100" class="evn-star-svg" aria-hidden="true">
-            <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#163a8c" stroke-width="5.5"/>
-            <polygon points="50,9 58,42 91,50 58,58 50,91 42,58 9,50 42,42" fill="#163a8c"/>
-            <polygon points="50,20 56,44 80,50 56,56 50,80 44,56 20,50 44,44" fill="#e61e25"/>
+            <circle cx="50" cy="50" r="45" fill="#ffffff" stroke="#163a8c" stroke-width="5.5"/>
+            <polygon points="50,10 58,42 90,50 58,58 50,90 42,58 10,50 42,42" fill="#163a8c"/>
+            <polygon points="50,21 56,44 79,50 56,56 50,79 44,56 21,50 44,44" fill="#e61e25"/>
             <polygon points="50,33 54,46 67,50 54,54 50,67 46,54 33,50 46,46" fill="#ffea00"/>
           </svg>
         </div>
         <div class="brand-text-wrap">
-          <span class="brand-title"><span class="evn-word">EVN</span><span class="npc-word">NPC</span> <span class="brand-sep">•</span> CHẤM CÔNG</span>
+          <span class="brand-title">
+            <span class="brand-evn-group"><span class="evn-word">EVN</span><span class="npc-word">NPC</span></span>
+            <span class="brand-sep">•</span>
+            <span class="brand-app-tag">CHẤM CÔNG</span>
+          </span>
           <span class="brand-subtitle">Tổng Công ty Điện lực miền Bắc • Kỹ sư GPS &amp; Face</span>
         </div>
       </div>
@@ -69,12 +73,14 @@
             <span id="header-user-name" class="user-name"></span>
             <span id="header-user-role" class="user-role"></span>
           </div>
-          <button id="btn-toggle-admin-view" class="btn-secondary hidden" style="padding: 6px 11px; font-size: 0.78rem;">
-            ⚙️ Quản lý
-          </button>
-          <button id="btn-logout" class="btn-secondary" style="padding: 6px 11px; font-size: 0.78rem;" title="Đăng xuất">
-            🚪 Thoát
-          </button>
+          <div class="header-user-btns">
+            <button id="btn-toggle-admin-view" class="btn-secondary btn-header-action hidden">
+              ⚙️ Quản lý
+            </button>
+            <button id="btn-logout" class="btn-secondary btn-header-action btn-header-logout" title="Đăng xuất">
+              🚪 Thoát
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1105,7 +1111,7 @@
   <!-- TOAST CONTAINER -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="./firebase-config.js?v=21"></script>
-  <script type="module" src="./app.js?v=21"></script>
+  <script src="./firebase-config.js?v=22"></script>
+  <script type="module" src="./app.js?v=22"></script>
 </body>
 </html>
