@@ -2617,3 +2617,318 @@ textarea.form-input {
   color: var(--text-muted);
   margin-top: 2px;
 }
+
+/* ================= BÁO CÁO LCT/PCT & QUÃNG ĐƯỜNG (KM) SAU TAN CA ================= */
+.lct-type-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.lct-type-btn {
+  padding: 9px 6px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  background: rgba(7, 17, 40, 0.8);
+  color: var(--text-muted);
+  font-size: 0.77rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.lct-type-btn.active {
+  background: rgba(37, 99, 235, 0.24);
+  border-color: #38bdf8;
+  color: #e0f2fe;
+  box-shadow: 0 3px 12px rgba(14, 165, 233, 0.25);
+}
+
+.input-with-unit {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-unit .form-input {
+  padding-right: 52px;
+}
+
+.input-unit-tag {
+  position: absolute;
+  right: 12px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #fde047;
+  background: rgba(250, 204, 21, 0.14);
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  padding: 2px 8px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.res-lct-box,
+.lct-info-box {
+  margin-top: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.11);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  font-size: 0.75rem;
+  color: #e0f2fe;
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lct-info-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.badge-km {
+  background: rgba(250, 204, 21, 0.16);
+  color: #fef08a;
+  border: 1px solid rgba(250, 204, 21, 0.42);
+}
+
+.btn-lct-mini {
+  padding: 3px 8px;
+  font-size: 0.71rem;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  background: rgba(14, 165, 233, 0.14);
+  color: #bae6fd;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-lct-mini:hover {
+  background: rgba(14, 165, 233, 0.28);
+  color: #fff;
+}
+
+@media (max-width: 460px) {
+  .lct-type-tabs {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ================= NHẮC & XUẤT BỘ EXCEL CUỐI THÁNG (.XLSX) ================= */
+.eom-banner {
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(37, 99, 235, 0.14));
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.eom-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.eom-icon {
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.eom-title {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #ecfdf5;
+}
+
+.eom-sub {
+  font-size: 0.76rem;
+  color: #bae6fd;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.eom-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-xlsx {
+  background: linear-gradient(135deg, #047857 0%, #10b981 100%) !important;
+  border: 1px solid rgba(110, 231, 183, 0.48) !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.xlsx-sheets-hint {
+  margin-bottom: 14px;
+  padding: 9px 13px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.09);
+  border: 1px dashed rgba(52, 211, 153, 0.35);
+  color: #a7f3d0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ================= CÔNG CHUẨN 26/27 & TÍCH CỘNG NGHỈ BÙ ================= */
+.work-standard-bar {
+  margin-bottom: 14px;
+  padding: 12px 15px;
+  border-radius: var(--radius-md);
+  background: rgba(37, 99, 235, 0.13);
+  border: 1px solid rgba(56, 189, 248, 0.36);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.work-standard-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.work-standard-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.work-standard-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #e0f2fe;
+}
+
+.work-standard-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.badge-excess {
+  background: rgba(249, 115, 22, 0.22);
+  color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.55);
+}
+
+.badge-compoff-done {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(52, 211, 153, 0.5);
+}
+
+.compoff-control {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+}
+
+.compoff-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  background: rgba(249, 115, 22, 0.14);
+  color: #fed7aa;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.18s ease;
+}
+
+.compoff-check-label.checked {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #6ee7b7;
+}
+
+.compoff-check-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #10b981;
+  cursor: pointer;
+}
+
+.compoff-days-adjust {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.compoff-days-input {
+  width: 52px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: rgba(7, 17, 40, 0.9);
+  color: #fef08a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.my-month-strip {
+  margin-top: 10px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  font-size: 0.76rem;
+  color: #bae6fd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ================= NHÃN CHỨC DANH ĐIỆN LỰC ================= */
+.badge-deputy {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.48);
+}
+
+.badge-worker {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+  border: 1px solid rgba(251, 191, 36, 0.48);
+}
+
+.badge-service {
+  background: rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+  border: 1px solid rgba(45, 212, 191, 0.45);
+}
+
+.badge-employee {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}

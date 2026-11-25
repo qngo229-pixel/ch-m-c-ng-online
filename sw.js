@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chamcong-ghpages-v22';
+const CACHE_NAME = 'chamcong-ghpages-v26';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -14,7 +14,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = e.request.url;
-  if (url.includes('firestore.googleapis.com') || url.includes('firebase') || url.includes('gstatic.com')) {
+  if (url.includes('firestore.googleapis.com') || url.includes('firebase') || url.includes('gstatic.com') || url.includes('sheetjs.com') || url.includes('cdnjs.cloudflare.com')) {
     return;
   }
 

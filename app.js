@@ -483,6 +483,20 @@ const DB = {
     }
   },
 
+  async updateAttendance(attId, fields) {
+    if (!attId || !fields) return;
+    if (dbMode === 'firebase') {
+      await fsApi.updateDoc(fsApi.doc(fsDb, 'attendance', attId), fields);
+      return;
+    }
+    const allAtt = readLocal(LOCAL_KEYS.attendance, []);
+    const idx = allAtt.findIndex(a => a.id === attId);
+    if (idx !== -1) {
+      allAtt[idx] = { ...allAtt[idx], ...fields };
+      writeLocal(LOCAL_KEYS.attendance, allAtt);
+    }
+  },
+
   async getUserAttendance(phone, maxCount = 30) {
     if (dbMode === 'firebase') {
       const snap = await fsApi.getDocs(
@@ -786,22 +800,32 @@ async function ensureDefaultAdmin() {
         created_at: Date.now()
       });
 
-      // Chỉ tạo thêm tài khoản Tổ trưởng mẫu ở chế độ Local (?mode=local) để test nhanh
+      // Chỉ tạo thêm các tài khoản mẫu đủ chức danh ở chế độ Local (?mode=local) để test nhanh
       if (dbMode === 'local') {
-        const lSalt = createSalt();
-        const lHash = await hashPin('123456', lSalt);
-        await DB.saveUser({
-          id: '0900000001',
-          name: 'Tổ trưởng (Thử nghiệm)',
-          phone: '0900000001',
-          pin_hash: lHash,
-          pin_salt: lSalt,
-          role: 'leader',
-          is_locked: 0,
-          failed_attempts: 0,
-          lock_until: null,
-          created_at: Date.now() + 1
-        });
+        const localSamples = [
+          { phone: '0900000001', name: 'Tổ trưởng (Thử nghiệm)', role: 'leader' },
+          { phone: '0900000002', name: 'Tổ phó (Thử nghiệm)', role: 'deputy' },
+          { phone: '0900000003', name: 'Công nhân (Thử nghiệm)', role: 'worker' },
+          { phone: '0900000004', name: 'Công nhân dịch vụ (Thử nghiệm)', role: 'service_worker' },
+          { phone: '0900000005', name: 'Nhân viên (Thử nghiệm)', role: 'employee' }
+        ];
+        let offset = 1;
+        for (const s of localSamples) {
+          const sSalt = createSalt();
+          const sHash = await hashPin('123456', sSalt);
+          await DB.saveUser({
+            id: s.phone,
+            name: s.name,
+            phone: s.phone,
+            pin_hash: sHash,
+            pin_salt: sSalt,
+            role: s.role,
+            is_locked: 0,
+            failed_attempts: 0,
+            lock_until: null,
+            created_at: Date.now() + offset++
+          });
+        }
       }
     }
   } catch (err) {
@@ -841,6 +865,12 @@ const state = {
   myRequestsCache: []
 };
 
+const VALID_ROLES = ['admin', 'leader', 'deputy', 'worker', 'service_worker', 'employee'];
+
+function normalizeRole(role) {
+  return VALID_ROLES.includes(role) ? role : 'employee';
+}
+
 function isAdmin() {
   return Boolean(state.user && state.user.role === 'admin');
 }
@@ -849,22 +879,78 @@ function isLeader() {
   return Boolean(state.user && state.user.role === 'leader');
 }
 
+function isDeputy() {
+  return Boolean(state.user && state.user.role === 'deputy');
+}
+
+function isSupervisorReadOnly() {
+  return isLeader() || isDeputy();
+}
+
 function canViewDashboard() {
-  return isAdmin() || isLeader();
+  return isAdmin() || isSupervisorReadOnly();
+}
+
+// Quy tắc LCT/PCT khi tan ca:
+// Nhân viên (employee) & Công nhân dịch vụ (service_worker) KHÔNG cần ghi LCT/PCT khi kết thúc ca
+// Công nhân (worker), Tổ phó (deputy), Tổ trưởng (leader), Admin CÓ hiện bảng ghi LCT/PCT & km
+function requiresCheckoutLct(role) {
+  const r = normalizeRole(role);
+  return r !== 'employee' && r !== 'service_worker';
 }
 
 function getRoleLabel(role) {
-  if (role === 'admin') return 'Quản lý';
-  if (role === 'leader') return 'Tổ trưởng (Chỉ xem)';
-  return 'Nhân viên';
+  switch (normalizeRole(role)) {
+    case 'admin': return 'Quản lý (Admin)';
+    case 'leader': return 'Tổ trưởng (Chỉ xem)';
+    case 'deputy': return 'Tổ phó (Chỉ xem)';
+    case 'worker': return 'Công nhân';
+    case 'service_worker': return 'Công nhân dịch vụ';
+    default: return 'Nhân viên';
+  }
+}
+
+function getRoleShortLabel(role) {
+  switch (normalizeRole(role)) {
+    case 'admin': return 'Admin';
+    case 'leader': return 'Tổ trưởng';
+    case 'deputy': return 'Tổ phó';
+    case 'worker': return 'Công nhân';
+    case 'service_worker': return 'CN dịch vụ';
+    default: return 'Nhân viên';
+  }
+}
+
+function renderRoleBadge(role) {
+  const r = normalizeRole(role);
+  const clsMap = {
+    admin: 'badge-admin',
+    leader: 'badge-leader',
+    deputy: 'badge-deputy',
+    worker: 'badge-worker',
+    service_worker: 'badge-service',
+    employee: 'badge-employee'
+  };
+  return `<span class="badge ${clsMap[r] || 'badge-employee'}" style="font-size: 0.65rem; margin-left: 4px;">${escapeHtml(getRoleShortLabel(r))}</span>`;
+}
+
+function buildUserRoleMap() {
+  const map = new Map();
+  (state.allUsersList || []).forEach(u => map.set(u.phone, normalizeRole(u.role)));
+  return map;
 }
 
 function applyDashboardRoleUI() {
   const adminOnly = isAdmin();
-  const leaderOnly = isLeader();
+  const supervisorOnly = isSupervisorReadOnly();
 
   const banner = document.getElementById('leader-readonly-banner');
-  if (banner) banner.classList.toggle('hidden', !leaderOnly);
+  if (banner) banner.classList.toggle('hidden', !supervisorOnly);
+  const bannerText = document.getElementById('leader-readonly-banner-text');
+  if (bannerText && supervisorOnly) {
+    const title = isDeputy() ? 'Tổ phó' : 'Tổ trưởng';
+    bannerText.innerHTML = `<b>Chế độ ${title} (Chỉ xem):</b> Bạn có thể xem số lượng chấm công, ảnh chụp, tổng hợp tháng &amp; đơn xin nghỉ — không thể chấm bù, duyệt đơn, tích nghỉ bù hoặc xóa dữ liệu.`;
+  }
 
   const tabStaff = document.getElementById('tab-btn-staff');
   if (tabStaff) tabStaff.classList.toggle('hidden', !adminOnly);
@@ -881,6 +967,9 @@ function applyDashboardRoleUI() {
   const radiusSel = document.getElementById('admin-radius-select');
   if (radiusSel) radiusSel.disabled = !adminOnly;
 
+  const stdModeSel = document.getElementById('summary-standard-mode');
+  if (stdModeSel) stdModeSel.disabled = !adminOnly;
+
   const thAction = document.getElementById('th-history-action');
   if (thAction) thAction.textContent = adminOnly ? 'Bản Đồ / Xóa' : 'Bản Đồ';
 }
@@ -891,6 +980,49 @@ const WORK_SCHEDULE = {
   outHour: 18,
   outMinute: 30
 };
+
+// Tự động tính công chuẩn của tháng theo tuần làm việc T2 -> CN (6 công/tuần, trừ Chủ Nhật)
+// VD: Tháng 30 ngày (4 CN) = 26 công | Tháng 31 ngày (4 CN) = 27 công | Tháng 31 ngày (5 CN) = 26 công
+function getMonthWorkStandard(monthKey, modeOverride = null) {
+  const [y, m] = String(monthKey || getVnDateKey().slice(0, 7)).split('-').map(Number);
+  const totalDays = (y && m) ? new Date(y, m, 0).getDate() : 30;
+  let sundayCount = 0;
+  for (let d = 1; d <= totalDays; d++) {
+    if (new Date(y, m - 1, d).getDay() === 0) sundayCount++;
+  }
+  const calendarWorkDays = Math.max(1, totalDays - sundayCount);
+  const savedMode = modeOverride || localStorage.getItem(`cc_std_mode_${monthKey}`) || 'auto_cal';
+  const mode = ['auto_cal', 'fixed_26', 'fixed_27'].includes(savedMode) ? savedMode : 'auto_cal';
+
+  let standardDays = calendarWorkDays;
+  if (mode === 'fixed_26') standardDays = 26;
+  else if (mode === 'fixed_27') standardDays = 27;
+
+  return {
+    monthKey,
+    totalDays,
+    sundayCount,
+    calendarWorkDays,
+    standardDays,
+    mode
+  };
+}
+
+function isSundayIso(isoDateStr) {
+  if (!isoDateStr) return false;
+  const d = new Date(isoDateStr + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.getUTCDay() === 0;
+}
+
+// Gom ngày dương lịch (YYYY-MM-DD) về ngày Thứ 2 đầu tuần (tuần T2 -> CN)
+function getMonSunWeekKey(isoDateStr) {
+  const d = new Date(isoDateStr + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return isoDateStr;
+  const day = d.getUTCDay(); // 0=CN, 1=T2 ... 6=T7
+  const diffToMon = day === 0 ? -6 : (1 - day);
+  d.setUTCDate(d.getUTCDate() + diffToMon);
+  return d.toISOString().slice(0, 10);
+}
 
 function getShiftModeLabel(mode) {
   if (mode === 'overtime') return 'Tăng ca';
@@ -960,6 +1092,38 @@ function renderPunctualityBadge(r) {
     return `<span class="badge badge-late" title="Giờ vào chuẩn: 07:30">⏰ ${info.label}</span>`;
   }
   return `<span class="badge badge-early" title="Giờ ra chuẩn: 18:30">⚠️ ${info.label}</span>`;
+}
+
+function hasLctReport(r) {
+  if (!r) return false;
+  return Boolean((r.lct_code && String(r.lct_code).trim()) || (r.lct_location && String(r.lct_location).trim()) || (Number(r.travel_km) > 0));
+}
+
+function formatLctCodeDisplay(r) {
+  if (!r || !r.lct_code) return '';
+  const code = String(r.lct_code).trim();
+  const typePrefix = (r.lct_type === 'PCT' || r.lct_type === 'LCT') ? r.lct_type : '';
+  if (typePrefix && !code.toUpperCase().startsWith(typePrefix)) {
+    return `${typePrefix}: ${code}`;
+  }
+  return code;
+}
+
+function renderLctInfoHtml(r) {
+  if (!hasLctReport(r)) return '';
+  const codeTxt = formatLctCodeDisplay(r);
+  const locTxt = String(r.lct_location || '').trim();
+  const kmVal = Number(r.travel_km) > 0 ? (Math.round(Number(r.travel_km) * 10) / 10) : 0;
+
+  return `
+    <div class="lct-info-box">
+      <div class="lct-info-row">
+        ${codeTxt ? `<span>📋 <b>${escapeHtml(codeTxt)}</b></span>` : ''}
+        ${kmVal > 0 ? `<span class="badge badge-km">🛵 ${kmVal} km</span>` : ''}
+      </div>
+      ${locTxt ? `<div>📍 <b>Địa điểm:</b> ${escapeHtml(locTxt)}</div>` : ''}
+    </div>
+  `;
 }
 
 function renderManualBadge(r) {
@@ -1169,7 +1333,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       id: user.phone,
       name: user.name,
       phone: user.phone,
-      role: user.role
+      role: user.role,
+      comp_off_by_month: user.comp_off_by_month || {}
     };
 
     const remember = document.getElementById('login-remember').checked;
@@ -1249,7 +1414,8 @@ async function verifySessionToken(token) {
     id: user.phone,
     name: user.name,
     phone: user.phone,
-    role: user.role
+    role: user.role,
+    comp_off_by_month: user.comp_off_by_month || {}
   };
 }
 
@@ -1282,7 +1448,7 @@ async function renderAppForUser() {
   switchEmployeeTab('punch');
   prewarmGPS();
 
-  if (isLeader()) {
+  if (isSupervisorReadOnly()) {
     switchAdminTab('history');
     await Promise.all([
       showAdminView(),
@@ -1968,7 +2134,11 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto, workNote = '') {
       photo_drive_view_url: '',
       photo_download_url: '',
       photo_storage: willUploadToDrive ? 'uploading' : (fullPhoto ? 'firestore' : ''),
-      has_photo: Boolean(fullPhoto)
+      has_photo: Boolean(fullPhoto),
+      lct_type: '',
+      lct_code: '',
+      lct_location: '',
+      travel_km: 0
     };
 
     // Lưu NGAY giờ công + tọa độ + ảnh thu nhỏ (~2.5KB) để nhân viên nhận kết quả tức thì (< 1 giây)!
@@ -1986,6 +2156,15 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto, workNote = '') {
     if (actionType === 'OUT') state.selectedShiftMode = 'normal';
     updatePunchButtonUI();
 
+    // Sau khi chấm công TAN CA (Ra ca):
+    // Chỉ Công nhân, Tổ phó, Tổ trưởng, Admin mới tự động hiện hộp thoại ghi LCT/PCT, địa điểm & km.
+    // Nhân viên & Công nhân dịch vụ KHÔNG cần ghi LCT/PCT khi kết thúc ca.
+    if (actionType === 'OUT' && requiresCheckoutLct(state.user && state.user.role)) {
+      setTimeout(() => {
+        openCheckoutReportModal(record, false);
+      }, 280);
+    }
+
     // Đẩy ảnh rõ nét (.jpg) lên Google Drive chạy ngầm & tải lại lịch sử không chặn giao diện
     if (willUploadToDrive) {
       syncPhotoToDriveInBackground(record, fullPhoto, { dateKey, timeTag });
@@ -2002,6 +2181,132 @@ async function executePunchWithPhoto(fullPhoto, thumbPhoto, workNote = '') {
     state.isPunching = false;
   }
 }
+
+function updateResultLctUI(record) {
+  const box = document.getElementById('res-lct-box');
+  const editBtn = document.getElementById('btn-res-edit-lct');
+  if (!box || !editBtn) return;
+
+  const needLct = requiresCheckoutLct(state.user && state.user.role);
+  if (!record || record.type !== 'OUT' || (!needLct && !hasLctReport(record))) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    editBtn.classList.add('hidden');
+    return;
+  }
+
+  editBtn.classList.remove('hidden');
+  editBtn.textContent = hasLctReport(record) ? '✏️ Sửa LCT/PCT & km' : '📋 Ghi LCT/PCT & km';
+  editBtn.onclick = () => openCheckoutReportModal(record, hasLctReport(record));
+
+  if (hasLctReport(record)) {
+    const codeTxt = formatLctCodeDisplay(record);
+    const locTxt = String(record.lct_location || '').trim();
+    const kmVal = Number(record.travel_km) > 0 ? (Math.round(Number(record.travel_km) * 10) / 10) : 0;
+    box.innerHTML = `
+      <div class="lct-info-row">
+        ${codeTxt ? `<span>📋 <b>${escapeHtml(codeTxt)}</b></span>` : '<span>📋 <b>Báo cáo tan ca</b></span>'}
+        ${kmVal > 0 ? `<span class="badge badge-km">🛵 ${kmVal} km</span>` : ''}
+      </div>
+      ${locTxt ? `<div>📍 <b>Địa điểm:</b> ${escapeHtml(locTxt)}</div>` : ''}
+    `;
+    box.classList.remove('hidden');
+  } else {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+  }
+}
+
+function selectLctType(type) {
+  const validType = ['LCT', 'PCT', 'NONE'].includes(type) ? type : 'LCT';
+  document.getElementById('checkout-lct-type').value = validType;
+  document.querySelectorAll('.lct-type-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.lct === validType);
+  });
+  const fieldsWrap = document.getElementById('checkout-lct-fields');
+  if (fieldsWrap) {
+    fieldsWrap.classList.toggle('hidden', validType === 'NONE');
+  }
+  const codeInput = document.getElementById('checkout-lct-code');
+  if (codeInput) {
+    codeInput.placeholder = validType === 'PCT'
+      ? 'VD: PCT-08/11/2026 hoặc nhiều số cách dấu phẩy...'
+      : 'VD: LCT-125/2026 hoặc nhiều số cách dấu phẩy...';
+  }
+}
+
+function openCheckoutReportModal(record, isEdit = false) {
+  if (!record || !record.id) return;
+  document.getElementById('checkout-report-att-id').value = record.id;
+
+  const bannerEl = document.getElementById('checkout-report-banner');
+  if (bannerEl) {
+    bannerEl.innerHTML = isEdit
+      ? `Cập nhật báo cáo <b>LCT/PCT &amp; số km</b> cho lượt Ra ca lúc <b>${escapeHtml(record.datetime_str || '')}</b>.`
+      : `Đã chấm công tan ca lúc <b>${escapeHtml(record.datetime_str || '')}</b>! Vui lòng ghi lại số <b>LCT/PCT</b>, địa điểm thực hiện và <b>số km quãng đường</b> hôm nay.`;
+  }
+
+  const initType = record.lct_type || 'LCT';
+  selectLctType(initType);
+  document.getElementById('checkout-lct-code').value = record.lct_code || '';
+  document.getElementById('checkout-lct-location').value = record.lct_location || '';
+  document.getElementById('checkout-distance-km').value = Number(record.travel_km) > 0 ? String(record.travel_km) : '';
+
+  document.getElementById('modal-checkout-report').classList.add('show');
+}
+
+document.getElementById('form-checkout-report').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const attId = document.getElementById('checkout-report-att-id').value;
+  if (!attId) return;
+
+  const lctType = document.getElementById('checkout-lct-type').value || 'LCT';
+  const lctCode = lctType === 'NONE' ? '' : document.getElementById('checkout-lct-code').value.trim();
+  const lctLocation = lctType === 'NONE' ? '' : document.getElementById('checkout-lct-location').value.trim();
+  const rawKm = document.getElementById('checkout-distance-km').value.trim();
+  const parsedKm = rawKm === '' ? 0 : Math.max(0, Math.round(Number(rawKm) * 10) / 10);
+
+  if (isNaN(parsedKm)) {
+    return showToast('Số km quãng đường không hợp lệ!', 'error');
+  }
+  if (!lctCode && !lctLocation && parsedKm === 0) {
+    return showToast('Vui lòng nhập số LCT/PCT, địa điểm hoặc số km (hoặc bấm "Bỏ qua").', 'info');
+  }
+
+  const btn = document.getElementById('btn-save-checkout-report');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang lưu...';
+
+  try {
+    const fields = {
+      lct_type: lctType,
+      lct_code: lctCode,
+      lct_location: lctLocation,
+      travel_km: parsedKm,
+      lct_updated_at: Date.now()
+    };
+    await DB.updateAttendance(attId, fields);
+
+    if (state.lastAttendance && state.lastAttendance.id === attId) {
+      state.lastAttendance = { ...state.lastAttendance, ...fields };
+      updateResultLctUI(state.lastAttendance);
+    }
+
+    playSuccessSound();
+    showToast('✅ Đã lưu báo cáo LCT/PCT & số km thành công!', 'success', 4000);
+    closeModal('modal-checkout-report');
+    loadMyHistory().catch(() => {});
+    if (canViewDashboard() && !document.getElementById('view-admin').classList.contains('hidden')) {
+      loadAdminData().catch(() => {});
+    }
+  } catch (err) {
+    playErrorSound();
+    showToast('Lỗi lưu báo cáo LCT/PCT: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✅ Lưu báo cáo';
+  }
+});
 
 function showPunchResult(record, fullPhoto, isUploadingDrive = false) {
   const card = document.getElementById('punch-result-card');
@@ -2036,6 +2341,8 @@ function showPunchResult(record, fullPhoto, isUploadingDrive = false) {
       syncRow.classList.add('hidden');
     }
   }
+
+  updateResultLctUI(record);
 
   const previewSrc = fullPhoto || record.photo_thumb;
   if (previewSrc) {
@@ -2160,7 +2467,7 @@ document.getElementById('btn-download-photo').addEventListener('click', () => {
 
 document.getElementById('btn-delete-viewer-photo').addEventListener('click', async () => {
   if (!isAdmin()) {
-    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa ảnh!', 'error');
+    return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được xóa ảnh!', 'error');
   }
   const attId = state.currentViewer.attId;
   if (!attId) return;
@@ -2180,9 +2487,39 @@ document.getElementById('btn-delete-viewer-photo').addEventListener('click', asy
 // ==========================================
 async function loadMyHistory() {
   const listEl = document.getElementById('my-history-list');
+  const monthStrip = document.getElementById('my-month-work-strip');
   if (!state.user) return;
   try {
-    const history = await DB.getUserAttendance(state.user.phone, 30);
+    const allRecent = await DB.getUserAttendance(state.user.phone, 75);
+    const history = (allRecent || []).slice(0, 30);
+
+    // Hiển thị tiến độ công chuẩn tháng hiện tại (6 công/tuần T2–CN -> 26 hoặc 27 công) & ngày nghỉ bù
+    if (monthStrip) {
+      const curMonth = getVnDateKey().slice(0, 7);
+      const stdInfo = getMonthWorkStandard(curMonth);
+      const workedSet = new Set();
+      (allRecent || []).forEach(r => {
+        const dk = r.date_key || getVnDateKey(r.timestamp);
+        if (dk.startsWith(curMonth)) workedSet.add(dk);
+      });
+      const workedDays = workedSet.size;
+      const excessDays = Math.max(0, workedDays - stdInfo.standardDays);
+      const savedComp = (state.user.comp_off_by_month && state.user.comp_off_by_month[curMonth]) || null;
+
+      let extraBadge = '';
+      if (savedComp && savedComp.approved && Number(savedComp.days) > 0) {
+        extraBadge = `<span class="badge badge-compoff-done">🎁 Nghỉ bù được cộng: +${savedComp.days} ngày</span>`;
+      } else if (excessDays > 0) {
+        extraBadge = `<span class="badge badge-excess">🔥 Thừa +${excessDays} công (chờ cộng nghỉ bù)</span>`;
+      }
+
+      monthStrip.innerHTML = `
+        <span>📊 Tháng ${formatMonthLabel(curMonth)}: <b>${workedDays} / ${stdInfo.standardDays} công chuẩn</b></span>
+        ${extraBadge}
+      `;
+      monthStrip.classList.remove('hidden');
+    }
+
     if (!history || history.length === 0) {
       listEl.innerHTML = `
         <div class="empty-state">
@@ -2217,6 +2554,14 @@ async function loadMyHistory() {
                 ${item.is_manual ? '' : `<span>±${item.accuracy}m</span>`}
               </span>
               ${item.note ? `<div class="manual-note-text">💬 ${escapeHtml(item.note)}</div>` : ''}
+              ${renderLctInfoHtml(item)}
+              ${item.type === 'OUT' && (requiresCheckoutLct(state.user && state.user.role) || hasLctReport(item)) ? `
+                <div style="margin-top: 4px;">
+                  <button type="button" class="btn-lct-mini" data-edit-lct-id="${escapeHtml(item.id)}">
+                    ${hasLctReport(item) ? '✏️ Sửa LCT/PCT & km' : '📋 Ghi LCT/PCT & km'}
+                  </button>
+                </div>
+              ` : ''}
             </div>
           </div>
           <a href="${escapeHtml(item.mapUrl)}" target="_blank" class="btn-map" title="Xem trên Google Maps">
@@ -2230,6 +2575,13 @@ async function loadMyHistory() {
       img.addEventListener('click', () => {
         const rec = history.find(h => h.id === img.dataset.attId) || null;
         openPhotoViewer(img.dataset.attId, img.src, img.dataset.title, rec);
+      });
+    });
+
+    listEl.querySelectorAll('button[data-edit-lct-id]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rec = history.find(h => h.id === btn.dataset.editLctId);
+        if (rec) openCheckoutReportModal(rec, hasLctReport(rec));
       });
     });
   } catch (err) {
@@ -2445,7 +2797,7 @@ function showAttendanceView() {
   document.getElementById('view-admin').classList.add('hidden');
   document.getElementById('view-attendance').classList.remove('hidden');
   const btn = document.getElementById('btn-toggle-admin-view');
-  if (btn) btn.textContent = isLeader() ? '👁️ Giám sát' : '⚙️ Quản lý';
+  if (btn) btn.textContent = isSupervisorReadOnly() ? '👁️ Giám sát' : '⚙️ Quản lý';
 }
 
 async function showAdminView() {
@@ -2531,10 +2883,10 @@ async function loadAdminData() {
       })
     ]);
 
-    const roleOrder = { admin: 0, leader: 1, employee: 2 };
+    const roleOrder = { admin: 0, leader: 1, deputy: 2, worker: 3, service_worker: 4, employee: 5 };
     users.sort((a, b) => {
-      const ra = roleOrder[a.role] ?? 2;
-      const rb = roleOrder[b.role] ?? 2;
+      const ra = roleOrder[a.role] ?? 5;
+      const rb = roleOrder[b.role] ?? 5;
       if (ra !== rb) return ra - rb;
       return (a.created_at || 0) - (b.created_at || 0);
     });
@@ -2602,6 +2954,7 @@ async function loadAdminData() {
     }
 
     renderForgotCheckoutPanel(lastPunchByUser, users);
+    updateEndOfMonthBanner();
     renderAdminHistoryTable();
     renderMonthlySummaryTable();
     renderAdminRequestsList();
@@ -2632,20 +2985,27 @@ function renderAdminHistoryTable() {
   const galleryEl = document.getElementById('admin-photo-gallery');
   const dateVal = document.getElementById('filter-date').value;
   const userVal = document.getElementById('filter-user').value;
+  const roleSel = document.getElementById('filter-role');
+  const roleVal = roleSel ? roleSel.value : 'all';
   const typeVal = document.getElementById('filter-type').value;
   const shiftModeVal = document.getElementById('filter-shift-mode').value;
   const todayKey = getVnDateKey();
+  const userRoleMap = buildUserRoleMap();
 
   const filtered = state.adminRecordsCache.filter(r => {
     if (dateVal === 'today' && (r.date_key || getVnDateKey(r.timestamp)) !== todayKey) return false;
     if (userVal !== 'all' && r.user_id !== userVal) return false;
+    if (roleVal !== 'all') {
+      const recRole = userRoleMap.get(r.user_id) || normalizeRole(r.user_role);
+      if (recRole !== roleVal) return false;
+    }
     if (typeVal !== 'all' && r.type !== typeVal) return false;
     if (shiftModeVal !== 'all' && (r.shift_mode || 'normal') !== shiftModeVal) return false;
     return true;
   });
 
   // Cập nhật chế độ Thư viện ảnh dạng lưới song song
-  renderAdminPhotoGallery(filtered, galleryEl);
+  renderAdminPhotoGallery(filtered, galleryEl, userRoleMap);
 
   if (filtered.length === 0) {
     tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding: 24px; color: var(--text-dim);">Không có lượt chấm công nào phù hợp với bộ lọc.</td></tr>`;
@@ -2655,9 +3015,8 @@ function renderAdminHistoryTable() {
   const adminOnly = isAdmin();
   tbody.innerHTML = filtered.map(r => {
     const distM = getRecordDistance(r);
-    const roleTag = r.user_role === 'admin'
-      ? '<span class="badge badge-admin" style="font-size: 0.65rem; margin-left: 4px;">Admin</span>'
-      : (r.user_role === 'leader' ? '<span class="badge badge-leader" style="font-size: 0.65rem; margin-left: 4px;">Tổ trưởng</span>' : '');
+    const recRole = userRoleMap.get(r.user_id) || normalizeRole(r.user_role);
+    const roleTag = renderRoleBadge(recRole);
     return `
       <tr>
         <td style="text-align: center;">
@@ -2685,6 +3044,7 @@ function renderAdminHistoryTable() {
             </div>
             ${renderManualBadge(r)}
             ${r.note ? `<div class="manual-note-text">💬 ${escapeHtml(r.note)}</div>` : ''}
+            ${renderLctInfoHtml(r)}
           </div>
         </td>
         <td>
@@ -2717,7 +3077,7 @@ function renderAdminHistoryTable() {
   tbody.querySelectorAll('button[data-del-att-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!isAdmin()) {
-        return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa dữ liệu chấm công!', 'error');
+        return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được xóa dữ liệu chấm công!', 'error');
       }
       const attId = btn.dataset.delAttId;
       const label = btn.dataset.delAttLabel;
@@ -2740,9 +3100,10 @@ function renderAdminHistoryTable() {
   });
 }
 
-function renderAdminPhotoGallery(filtered, galleryEl) {
+function renderAdminPhotoGallery(filtered, galleryEl, userRoleMap = null) {
   if (!galleryEl) return;
   const adminOnly = isAdmin();
+  const roleMap = userRoleMap || buildUserRoleMap();
   const withPhotos = (filtered || []).filter(r => Boolean(r.photo_thumb));
   if (withPhotos.length === 0) {
     galleryEl.innerHTML = `
@@ -2756,6 +3117,7 @@ function renderAdminPhotoGallery(filtered, galleryEl) {
 
   galleryEl.innerHTML = withPhotos.map(r => {
     const distM = getRecordDistance(r);
+    const recRole = roleMap.get(r.user_id) || normalizeRole(r.user_role);
     const titleStr = `${r.user_name} - ${r.typeText} lúc ${r.datetime_str}`;
     return `
       <div class="gallery-card">
@@ -2766,10 +3128,11 @@ function renderAdminPhotoGallery(filtered, galleryEl) {
           </span>
         </div>
         <div class="gallery-body">
-          <div class="gallery-name">${escapeHtml(r.user_name)}</div>
+          <div class="gallery-name">${escapeHtml(r.user_name)} ${renderRoleBadge(recRole)}</div>
           <div class="gallery-time">🕒 ${escapeHtml(r.datetime_str)}</div>
           <div style="display: flex; gap: 4px; flex-wrap: wrap;">${renderZoneBadge(distM)} ${renderShiftModeBadge(r.shift_mode)} ${renderPunctualityBadge(r)}</div>
           ${r.note ? `<div class="manual-note-text">💬 ${escapeHtml(r.note)}</div>` : ''}
+          ${renderLctInfoHtml(r)}
           <div class="gallery-footer">
             <a href="${escapeHtml(r.mapUrl)}" target="_blank" class="btn-map" style="padding: 4px 8px; font-size: 0.72rem;">📍 Bản đồ</a>
             <div style="display: flex; gap: 4px;">
@@ -2823,7 +3186,7 @@ function renderAdminPhotoGallery(filtered, galleryEl) {
   galleryEl.querySelectorAll('button[data-quick-del-photo]').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!isAdmin()) {
-        return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được xóa ảnh!', 'error');
+        return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được xóa ảnh!', 'error');
       }
       const attId = btn.dataset.quickDelPhoto;
       if (!confirm('Xóa ảnh này khỏi hệ thống? (Giờ chấm công và tọa độ GPS vẫn giữ nguyên)')) return;
@@ -2958,6 +3321,7 @@ function computeMonthlySummary(monthKey) {
   const nowVnMins = getVnMinutesOfDay(Date.now());
   const stdInMins = WORK_SCHEDULE.inHour * 60 + WORK_SCHEDULE.inMinute;
   const stdOutMins = WORK_SCHEDULE.outHour * 60 + WORK_SCHEDULE.outMinute;
+  const stdInfo = getMonthWorkStandard(monthKey);
 
   const monthRecords = allRecords.filter(r => (r.date_key || getVnDateKey(r.timestamp)).startsWith(monthKey));
 
@@ -2973,6 +3337,7 @@ function computeMonthlySummary(monthKey) {
       byDate.get(dk).push(r);
     }
 
+    const workedDates = new Set();
     const normalDates = new Set();
     const crmDates = new Set();
     let normalHours = 0;
@@ -2986,8 +3351,12 @@ function computeMonthlySummary(monthKey) {
     let earlyCount = 0;
     let earlyMinutes = 0;
     let forgotOutCount = 0;
+    let lctCount = 0;
+    let totalKm = 0;
 
     byDate.forEach((dayRecs, dk) => {
+      workedDates.add(dk);
+
       // 1. Đếm ngày công & số ca theo từng chế độ
       let firstNormalIn = null;
       let lastNormalOut = null;
@@ -3004,6 +3373,13 @@ function computeMonthlySummary(monthKey) {
           if (r.type === 'IN') overtimeShifts++;
         } else if (mode === 'holiday') {
           if (r.type === 'IN') holidayShifts++;
+        }
+
+        if ((r.lct_code && String(r.lct_code).trim()) || (r.lct_location && String(r.lct_location).trim())) {
+          lctCount++;
+        }
+        if (Number(r.travel_km) > 0) {
+          totalKm += Number(r.travel_km);
         }
       }
 
@@ -3049,10 +3425,38 @@ function computeMonthlySummary(monthKey) {
       }
     });
 
+    // 5. Tính tuần làm việc T2 -> CN (6 công/tuần), số Chủ Nhật đi làm & số công vượt định mức tháng (26/27 công)
+    const weekDaysMap = new Map();
+    let sundayWorkedDays = 0;
+    workedDates.forEach(dk => {
+      if (isSundayIso(dk)) sundayWorkedDays++;
+      const wk = getMonSunWeekKey(dk);
+      weekDaysMap.set(wk, (weekDaysMap.get(wk) || 0) + 1);
+    });
+    let weeksOver6 = 0;
+    weekDaysMap.forEach(cnt => {
+      if (cnt > 6) weeksOver6++;
+    });
+
+    const workedDays = workedDates.size;
+    const excessDays = Math.max(0, workedDays - stdInfo.standardDays);
+    const savedComp = (u.comp_off_by_month && u.comp_off_by_month[monthKey]) || null;
+    const compOffApproved = Boolean(savedComp && savedComp.approved);
+    const compOffDays = (savedComp && typeof savedComp.days === 'number')
+      ? savedComp.days
+      : (excessDays > 0 ? excessDays : sundayWorkedDays);
+
     const approvedLeaveDays = countApprovedLeaveDaysInMonth(allRequests, u.phone, monthKey);
 
     return {
       user: u,
+      workedDays,
+      standardDays: stdInfo.standardDays,
+      excessDays,
+      sundayWorkedDays,
+      weeksOver6,
+      compOffApproved,
+      compOffDays: Math.round(Number(compOffDays || 0) * 10) / 10,
       normalDays: normalDates.size,
       normalHours: Math.round(normalHours * 10) / 10,
       crmDays: crmDates.size,
@@ -3066,9 +3470,50 @@ function computeMonthlySummary(monthKey) {
       lateMinutes,
       earlyCount,
       earlyMinutes,
-      forgotOutCount
+      forgotOutCount,
+      lctCount,
+      totalKm: Math.round(totalKm * 10) / 10
     };
   });
+}
+
+async function saveUserCompOff(phone, monthKey, approved, days) {
+  if (!isAdmin()) {
+    return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được tích cộng nghỉ bù!', 'error');
+  }
+  const targetUser = (state.allUsersList || []).find(u => u.phone === phone);
+  if (!targetUser) return;
+
+  const cleanDays = Math.max(0, Math.min(31, Math.round((Number(days) || 0) * 10) / 10));
+  const nextMap = {
+    ...(targetUser.comp_off_by_month || {}),
+    [monthKey]: {
+      approved: Boolean(approved),
+      days: cleanDays,
+      updated_by: state.user ? state.user.name : 'Admin',
+      updated_at: Date.now()
+    }
+  };
+
+  try {
+    await DB.updateUser(phone, { comp_off_by_month: nextMap });
+    targetUser.comp_off_by_month = nextMap;
+    if (state.user && state.user.phone === phone) {
+      state.user.comp_off_by_month = nextMap;
+      loadMyHistory().catch(() => {});
+    }
+    playSuccessSound();
+    showToast(
+      approved
+        ? `✅ Đã tích cộng +${cleanDays} ngày nghỉ bù tháng ${formatMonthLabel(monthKey)} cho ${targetUser.name}!`
+        : `Đã bỏ tích cộng nghỉ bù tháng ${formatMonthLabel(monthKey)} cho ${targetUser.name}.`,
+      approved ? 'success' : 'info'
+    );
+    renderMonthlySummaryTable();
+  } catch (err) {
+    playErrorSound();
+    showToast('Lỗi lưu ngày nghỉ bù: ' + err.message, 'error');
+  }
 }
 
 function renderMonthlySummaryTable() {
@@ -3079,10 +3524,26 @@ function renderMonthlySummaryTable() {
   const monthKey = monthInput.value || getVnDateKey().slice(0, 7);
   if (!monthInput.value) monthInput.value = monthKey;
 
+  const stdInfo = getMonthWorkStandard(monthKey);
+  const stdTitle = document.getElementById('summary-calendar-title');
+  const stdSub = document.getElementById('summary-calendar-sub');
+  const stdSel = document.getElementById('summary-standard-mode');
+  if (stdTitle) {
+    stdTitle.textContent = `Tháng ${formatMonthLabel(monthKey)}: ${stdInfo.totalDays} ngày • ${stdInfo.sundayCount} Chủ Nhật → Công chuẩn: ${stdInfo.standardDays} công`;
+  }
+  if (stdSub) {
+    stdSub.textContent = `Tuần T2–CN (6 công/tuần, nghỉ CN) • Lịch thực tế có ${stdInfo.calendarWorkDays} ngày T2–T7. Làm vượt ${stdInfo.standardDays} công sẽ tự động hiện số công thừa để tích cộng nghỉ bù.`;
+  }
+  if (stdSel) {
+    stdSel.value = stdInfo.mode;
+    stdSel.disabled = !isAdmin();
+  }
+
   const rows = computeMonthlySummary(monthKey);
 
-  // Cập nhật 4 thẻ tổng kết nhanh toàn đội
-  let totNormal = 0, totCrm = 0, totOt = 0, totHol = 0, totLate = 0, totEarly = 0, totForgot = 0;
+  // Cập nhật các thẻ tổng kết nhanh toàn đội
+  let totNormal = 0, totCrm = 0, totOt = 0, totHol = 0, totLate = 0, totEarly = 0, totForgot = 0, totLct = 0, totKm = 0;
+  let excessPeople = 0, totApprovedCompOff = 0, totExcessDays = 0;
   rows.forEach(r => {
     totNormal += r.normalDays;
     totCrm += r.crmDays;
@@ -3091,31 +3552,99 @@ function renderMonthlySummaryTable() {
     totLate += r.lateCount;
     totEarly += r.earlyCount;
     totForgot += r.forgotOutCount;
+    totLct += r.lctCount;
+    totKm += r.totalKm;
+    if (r.excessDays > 0) {
+      excessPeople++;
+      totExcessDays += r.excessDays;
+    }
+    if (r.compOffApproved && r.compOffDays > 0) {
+      totApprovedCompOff += r.compOffDays;
+    }
   });
+  totKm = Math.round(totKm * 10) / 10;
+  totApprovedCompOff = Math.round(totApprovedCompOff * 10) / 10;
 
+  const elStd = document.getElementById('sum-standard-days');
+  const elComp = document.getElementById('sum-total-compoff');
   const elNorm = document.getElementById('sum-total-normal');
   const elCrm = document.getElementById('sum-total-crm');
   const elOtHol = document.getElementById('sum-total-ot-hol');
   const elAlerts = document.getElementById('sum-total-alerts');
+  const elKm = document.getElementById('sum-total-km');
+  if (elStd) elStd.textContent = `${stdInfo.standardDays} công`;
+  if (elComp) {
+    elComp.textContent = totApprovedCompOff > 0
+      ? `+${totApprovedCompOff} ngày bù`
+      : (totExcessDays > 0 ? `${excessPeople} NV thừa +${totExcessDays}` : '0 ngày');
+  }
   if (elNorm) elNorm.textContent = totNormal;
   if (elCrm) elCrm.textContent = totCrm;
   if (elOtHol) elOtHol.textContent = `${totOt} / ${totHol}`;
   if (elAlerts) elAlerts.textContent = `${totLate} / ${totEarly} / ${totForgot}`;
+  if (elKm) elKm.textContent = `${totLct} phiếu • ${totKm} km`;
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="padding: 24px; color: var(--text-dim);">Chưa có dữ liệu nhân sự cho tháng ${escapeHtml(monthKey)}.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center" style="padding: 24px; color: var(--text-dim);">Chưa có dữ liệu nhân sự cho tháng ${escapeHtml(monthKey)}.</td></tr>`;
     return;
   }
 
+  const adminOnly = isAdmin();
   tbody.innerHTML = rows.map(r => {
-    const roleTag = r.user.role === 'admin'
-      ? '<span class="badge badge-admin" style="font-size: 0.65rem; margin-left: 4px;">Admin</span>'
-      : (r.user.role === 'leader' ? '<span class="badge badge-leader" style="font-size: 0.65rem; margin-left: 4px;">Tổ trưởng</span>' : '');
+    const roleTag = renderRoleBadge(r.user.role);
+    const lctCellHtml = (!requiresCheckoutLct(r.user.role) && r.lctCount === 0 && r.totalKm === 0)
+      ? `<div class="summary-cell-sub" style="color: var(--text-dim);">Không cần ghi</div>`
+      : `<div class="summary-cell-main" style="color: #fde047;">${r.totalKm} km</div><div class="summary-cell-sub">${r.lctCount} LCT/PCT</div>`;
 
     const alertParts = [];
     if (r.lateCount > 0) alertParts.push(`<span class="badge badge-late">⏰ Muộn ${r.lateCount} (${formatMinutesShort(r.lateMinutes)})</span>`);
     if (r.earlyCount > 0) alertParts.push(`<span class="badge badge-early">⚠️ Sớm ${r.earlyCount} (${formatMinutesShort(r.earlyMinutes)})</span>`);
     if (r.forgotOutCount > 0) alertParts.push(`<span class="badge badge-pending">❓ Quên ra ${r.forgotOutCount}</span>`);
+
+    // Thông tin phụ dưới cột Tổng công / Chuẩn
+    const workSubParts = [];
+    if (r.sundayWorkedDays > 0) workSubParts.push(`Làm ${r.sundayWorkedDays} CN`);
+    if (r.weeksOver6 > 0) workSubParts.push(`${r.weeksOver6} tuần 7/6`);
+    const workSubHtml = workSubParts.length > 0
+      ? workSubParts.join(' • ')
+      : (r.workedDays >= r.standardDays ? '✓ Đạt định mức' : `Còn ${r.standardDays - r.workedDays} công`);
+
+    // Ô tiện ích Thừa công & Tích cộng ngày nghỉ bù
+    const showCompControl = r.excessDays > 0 || r.compOffApproved || r.sundayWorkedDays > 0;
+    let compCellHtml = `<span style="color: var(--text-dim); font-size: 0.78rem;">${r.workedDays >= r.standardDays ? '✓ Đủ chuẩn' : 'Chưa vượt công'}</span>`;
+
+    if (showCompControl) {
+      const excessBadge = r.excessDays > 0
+        ? `<span class="badge badge-excess">🔥 Thừa +${r.excessDays} công</span>`
+        : (r.sundayWorkedDays > 0 ? `<span class="badge badge-explain">📅 Làm ${r.sundayWorkedDays} CN</span>` : '');
+
+      if (adminOnly) {
+        compCellHtml = `
+          <div class="compoff-control">
+            ${excessBadge}
+            <label class="compoff-check-label ${r.compOffApproved ? 'checked' : ''}">
+              <input type="checkbox" data-compoff-check="${escapeHtml(r.user.phone)}" ${r.compOffApproved ? 'checked' : ''}>
+              <span>${r.compOffApproved ? '✅ Đã cộng nghỉ bù' : 'Tích cộng nghỉ bù'}</span>
+            </label>
+            <div class="compoff-days-adjust">
+              <span>Số ngày:</span>
+              <input type="number" class="compoff-days-input" min="0" max="31" step="0.5" value="${r.compOffDays}" data-compoff-days="${escapeHtml(r.user.phone)}">
+              <span>ngày</span>
+            </div>
+          </div>
+        `;
+      } else {
+        compCellHtml = `
+          <div class="compoff-control">
+            ${excessBadge}
+            ${r.compOffApproved
+              ? `<span class="badge badge-compoff-done">✅ Cộng +${r.compOffDays} ngày bù</span>`
+              : `<span class="readonly-tag">⏳ Chưa tích bù (${r.compOffDays} ngày)</span>`
+            }
+          </div>
+        `;
+      }
+    }
 
     return `
       <tr>
@@ -3123,6 +3652,13 @@ function renderMonthlySummaryTable() {
           <div><b>${escapeHtml(r.user.name)}</b> ${roleTag}</div>
           <small style="color: var(--text-dim);"><code>${escapeHtml(r.user.phone)}</code></small>
         </td>
+        <td>
+          <div class="summary-cell-main ${r.workedDays > r.standardDays ? 'text-amber' : (r.workedDays >= r.standardDays ? 'text-success' : '')}">
+            ${r.workedDays} / ${r.standardDays} công
+          </div>
+          <div class="summary-cell-sub">${workSubHtml}</div>
+        </td>
+        <td>${compCellHtml}</td>
         <td>
           <div class="summary-cell-main text-success">${r.normalDays} ngày</div>
           <div class="summary-cell-sub">${r.normalHours} giờ</div>
@@ -3132,12 +3668,11 @@ function renderMonthlySummaryTable() {
           <div class="summary-cell-sub">${r.crmHours > 0 ? r.crmHours + ' giờ' : 'Cả ngày'}</div>
         </td>
         <td>
-          <div class="summary-cell-main text-amber">${r.overtimeShifts} ca</div>
-          <div class="summary-cell-sub">${r.overtimeHours} giờ</div>
+          <div class="summary-cell-main text-amber">${r.overtimeShifts} TC / ${r.holidayShifts} Lễ</div>
+          <div class="summary-cell-sub">${r.overtimeHours}h / ${r.holidayHours}h</div>
         </td>
         <td>
-          <div class="summary-cell-main" style="color: #d8b4fe;">${r.holidayShifts} ca</div>
-          <div class="summary-cell-sub">${r.holidayHours} giờ</div>
+          ${lctCellHtml}
         </td>
         <td>
           <div class="summary-cell-main">${r.approvedLeaveDays} ngày</div>
@@ -3151,9 +3686,41 @@ function renderMonthlySummaryTable() {
       </tr>
     `;
   }).join('');
+
+  // Gắn sự kiện cho ô tích cộng nghỉ bù & ô chỉnh số ngày nghỉ bù (chỉ Admin)
+  if (adminOnly) {
+    tbody.querySelectorAll('input[data-compoff-check]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const phone = cb.dataset.compoffCheck;
+        const daysInput = tbody.querySelector(`input[data-compoff-days="${CSS.escape(phone)}"]`);
+        const daysVal = daysInput ? Number(daysInput.value) : 0;
+        saveUserCompOff(phone, monthKey, cb.checked, daysVal);
+      });
+    });
+
+    tbody.querySelectorAll('input[data-compoff-days]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const phone = inp.dataset.compoffDays;
+        const cb = tbody.querySelector(`input[data-compoff-check="${CSS.escape(phone)}"]`);
+        const isChecked = cb ? cb.checked : true;
+        saveUserCompOff(phone, monthKey, isChecked, Number(inp.value));
+      });
+    });
+  }
 }
 
 document.getElementById('summary-month-input').addEventListener('change', renderMonthlySummaryTable);
+document.getElementById('summary-standard-mode').addEventListener('change', (e) => {
+  if (!isAdmin()) {
+    renderMonthlySummaryTable();
+    return showToast('Chỉ Admin mới có quyền chỉnh định mức công chuẩn tháng!', 'error');
+  }
+  const monthKey = document.getElementById('summary-month-input').value || getVnDateKey().slice(0, 7);
+  localStorage.setItem(`cc_std_mode_${monthKey}`, e.target.value);
+  renderMonthlySummaryTable();
+  const std = getMonthWorkStandard(monthKey);
+  showToast(`Đã đặt định mức tháng ${formatMonthLabel(monthKey)}: ${std.standardDays} công chuẩn.`, 'info');
+});
 document.getElementById('btn-summary-refresh').addEventListener('click', loadAdminData);
 
 document.getElementById('btn-export-summary-csv').addEventListener('click', () => {
@@ -3164,10 +3731,12 @@ document.getElementById('btn-export-summary-csv').addEventListener('click', () =
   }
 
   let csv = '\uFEFF';
-  csv += 'STT,Họ và Tên,Số Điện Thoại,Vai Trò,Ngày Công Thường,Tổng Giờ Thường,Ngày Trực CRM,Giờ Trực CRM,Số Ca Tăng Ca,Tổng Giờ Tăng Ca,Số Ca Trực Lễ,Tổng Giờ Trực Lễ,Ngày Nghỉ Phép (Đã Duyệt),Số Lần Đi Muộn (>07:30),Tổng Phút Muộn,Số Lần Về Sớm (<18:30),Tổng Phút Sớm,Quên Chấm Ra Ca\n';
+  csv += 'STT,Họ và Tên,Số Điện Thoại,Vai Trò,Tổng Ngày Đi Làm,Công Chuẩn Tháng,Số Công Thừa (+),Đã Tích Cộng Nghỉ Bù,Ngày Nghỉ Bù Được Cộng,Số CN Đi Làm,Ngày Công Thường,Tổng Giờ Thường,Ngày Trực CRM,Giờ Trực CRM,Số Ca Tăng Ca,Tổng Giờ Tăng Ca,Số Ca Trực Lễ,Tổng Giờ Trực Lễ,Số Lượt LCT/PCT,Tổng Quãng Đường (km),Ngày Nghỉ Phép (Đã Duyệt),Số Lần Đi Muộn (>07:30),Tổng Phút Muộn,Số Lần Về Sớm (<18:30),Tổng Phút Sớm,Quên Chấm Ra Ca\n';
   const esc = v => `"${String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
   rows.forEach((r, idx) => {
-    csv += `${idx + 1},${esc(r.user.name)},${r.user.phone},${esc(getRoleLabel(r.user.role))},${r.normalDays},${r.normalHours},${r.crmDays},${r.crmHours},${r.overtimeShifts},${r.overtimeHours},${r.holidayShifts},${r.holidayHours},${r.approvedLeaveDays},${r.lateCount},${r.lateMinutes},${r.earlyCount},${r.earlyMinutes},${r.forgotOutCount}\n`;
+    const compStatus = r.compOffApproved ? 'Đã cộng nghỉ bù' : (r.excessDays > 0 ? 'Chưa tích' : '');
+    const compDaysOut = r.compOffApproved ? r.compOffDays : 0;
+    csv += `${idx + 1},${esc(r.user.name)},${r.user.phone},${esc(getRoleLabel(r.user.role))},${r.workedDays},${r.standardDays},${r.excessDays},${esc(compStatus)},${compDaysOut},${r.sundayWorkedDays},${r.normalDays},${r.normalHours},${r.crmDays},${r.crmHours},${r.overtimeShifts},${r.overtimeHours},${r.holidayShifts},${r.holidayHours},${r.lctCount},${r.totalKm},${r.approvedLeaveDays},${r.lateCount},${r.lateMinutes},${r.earlyCount},${r.earlyMinutes},${r.forgotOutCount}\n`;
   });
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3179,13 +3748,515 @@ document.getElementById('btn-export-summary-csv').addEventListener('click', () =
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  showToast(`✅ Đã tải file Excel Tổng hợp tháng ${monthKey}!`, 'success');
+  showToast(`✅ Đã tải file CSV Tổng hợp tháng ${monthKey}!`, 'success');
+});
+
+// ==========================================
+// 11C. XUẤT BỘ FILE EXCEL CUỐI THÁNG CHUẨN (.XLSX - 5 TRANG TÍNH) & NHẮC CUỐI THÁNG
+// ==========================================
+let xlsxLoadPromise = null;
+
+function ensureXlsxLibrary() {
+  if (window.XLSX && window.XLSX.utils) return Promise.resolve(window.XLSX);
+  if (xlsxLoadPromise) return xlsxLoadPromise;
+
+  const cdns = [
+    'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+  ];
+
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => (window.XLSX && window.XLSX.utils ? resolve(window.XLSX) : reject(new Error('XLSX không sẵn sàng')));
+    s.onerror = () => reject(new Error('Không tải được ' + src));
+    document.head.appendChild(s);
+  });
+
+  xlsxLoadPromise = loadScript(cdns[0])
+    .catch(() => loadScript(cdns[1]))
+    .catch((err) => {
+      xlsxLoadPromise = null;
+      console.warn('Không tải được thư viện Excel .xlsx:', err.message);
+      return null;
+    });
+
+  return xlsxLoadPromise;
+}
+
+function getDaysInMonth(monthKey) {
+  const [y, m] = String(monthKey || '').split('-').map(Number);
+  if (!y || !m) return 31;
+  return new Date(y, m, 0).getDate();
+}
+
+function getPreviousMonthKey(monthKey) {
+  const [y, m] = String(monthKey || '').split('-').map(Number);
+  if (!y || !m) return monthKey;
+  if (m === 1) return `${y - 1}-12`;
+  return `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(monthKey) {
+  const [y, m] = String(monthKey || '').split('-');
+  return (y && m) ? `${m}/${y}` : monthKey;
+}
+
+function getApprovedLeaveDateSet(requests, userPhone, monthKey) {
+  const set = new Set();
+  for (const r of requests) {
+    if (r.user_id !== userPhone || r.category !== 'leave' || r.status !== 'approved' || !r.from_date) continue;
+    const startDt = new Date(r.from_date + 'T00:00:00Z');
+    const endDt = new Date((r.to_date || r.from_date) + 'T00:00:00Z');
+    if (isNaN(startDt.getTime()) || isNaN(endDt.getTime())) continue;
+    for (let d = new Date(startDt); d <= endDt && set.size < 32; d.setUTCDate(d.getUTCDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10);
+      if (iso.startsWith(monthKey)) set.add(iso);
+    }
+  }
+  return set;
+}
+
+let currentEomTargetMonth = '';
+
+function updateEndOfMonthBanner() {
+  const banner = document.getElementById('eom-export-banner');
+  const titleEl = document.getElementById('eom-banner-title');
+  const subEl = document.getElementById('eom-banner-sub');
+  const exportBtn = document.getElementById('btn-eom-export-now');
+  if (!banner) return;
+
+  const todayKey = getVnDateKey(); // YYYY-MM-DD
+  const [yStr, mStr, dStr] = todayKey.split('-');
+  const dayNum = Number(dStr);
+  const currentMonthKey = `${yStr}-${mStr}`;
+
+  let targetMonth = '';
+  let titleText = '';
+
+  if (dayNum >= 25) {
+    targetMonth = currentMonthKey;
+    titleText = `📅 Kỳ chốt công cuối tháng ${formatMonthLabel(targetMonth)} — Xuất trọn bộ Excel (.xlsx)!`;
+  } else if (dayNum <= 3) {
+    targetMonth = getPreviousMonthKey(currentMonthKey);
+    titleText = `📅 Đã sang tháng mới — Xuất Bộ Excel chốt công tháng ${formatMonthLabel(targetMonth)}!`;
+  } else {
+    banner.classList.add('hidden');
+    return;
+  }
+
+  const dismissKey = `cc_eom_dismissed_${targetMonth}`;
+  if (localStorage.getItem(dismissKey) === '1') {
+    banner.classList.add('hidden');
+    return;
+  }
+
+  currentEomTargetMonth = targetMonth;
+  if (titleEl) titleEl.textContent = titleText;
+  if (subEl) {
+    subEl.textContent = `Gồm đủ 5 trang tính cho tháng ${formatMonthLabel(targetMonth)}: Tổng hợp • Bảng công ngày 01–${getDaysInMonth(targetMonth)} • Bảng kê LCT/PCT & Km • Chi tiết Vào/Ra • Đơn nghỉ phép.`;
+  }
+  if (exportBtn) {
+    exportBtn.textContent = `📗 Xuất Excel Tháng ${formatMonthLabel(targetMonth)} (.xlsx)`;
+  }
+  banner.classList.remove('hidden');
+}
+
+async function exportMonthlyExcelWorkbook(monthKey, triggerBtn = null) {
+  const targetMonth = monthKey || document.getElementById('summary-month-input')?.value || getVnDateKey().slice(0, 7);
+  const summaryRows = computeMonthlySummary(targetMonth);
+  if (!summaryRows || summaryRows.length === 0) {
+    return showToast(`Chưa có dữ liệu nhân sự cho tháng ${formatMonthLabel(targetMonth)}.`, 'info');
+  }
+
+  const origText = triggerBtn ? triggerBtn.textContent : '';
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = '⏳ Đang tạo file Excel...';
+  }
+
+  try {
+    const XLSX = await ensureXlsxLibrary();
+    if (!XLSX) {
+      showToast('Không tải được thư viện .xlsx (mạng yếu) — tự động chuyển sang tải file CSV!', 'info', 4500);
+      document.getElementById('btn-export-summary-csv').click();
+      return;
+    }
+
+    const monthLabel = formatMonthLabel(targetMonth);
+    const stdInfo = getMonthWorkStandard(targetMonth);
+    const daysInMonth = stdInfo.totalDays;
+    const allRecords = state.adminRecordsCache || [];
+    const allRequests = state.adminRequestsCache || [];
+    const stdInMins = WORK_SCHEDULE.inHour * 60 + WORK_SCHEDULE.inMinute;
+
+    const monthRecords = allRecords
+      .filter(r => (r.date_key || getVnDateKey(r.timestamp)).startsWith(targetMonth))
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const wb = XLSX.utils.book_new();
+
+    // =========================================================
+    // SHEET 1: TỔNG HỢP CÔNG, VƯỢT CÔNG NGHỈ BÙ & QUÃNG ĐƯỜNG CUỐI THÁNG
+    // =========================================================
+    const s1AoA = [
+      [`TỔNG CÔNG TY ĐIỆN LỰC MIỀN BẮC (EVNNPC) — BÁO CÁO TỔNG HỢP CHẤM CÔNG THÁNG ${monthLabel}`],
+      [`Xuất lúc: ${getVnTimeStr()}  |  Định mức: ${stdInfo.standardDays} công chuẩn (${stdInfo.totalDays} ngày, ${stdInfo.sundayCount} Chủ Nhật, 6 công/tuần T2–CN)  |  Giờ chuẩn: 07:30 - 18:30`],
+      [],
+      [
+        'STT', 'Họ và Tên', 'Số Điện Thoại', 'Vai Trò',
+        'Tổng Ngày Đi Làm', 'Công Chuẩn Tháng', 'Số Công Thừa (+)',
+        'Trạng Thái Nghỉ Bù', 'Ngày Nghỉ Bù Cộng', 'Số CN Đi Làm',
+        'Ngày Công Thường', 'Giờ Công Thường',
+        'Ngày Trực CRM', 'Giờ Trực CRM',
+        'Ca Tăng Ca', 'Giờ Tăng Ca',
+        'Ca Trực Lễ', 'Giờ Trực Lễ',
+        'Số LCT/PCT', 'Tổng Quãng Đường (km)',
+        'Nghỉ Phép (Ngày)',
+        'Lần Đi Muộn', 'Phút Muộn',
+        'Lần Về Sớm', 'Phút Sớm',
+        'Quên Chấm Ra'
+      ]
+    ];
+
+    const totals = {
+      workedDays: 0, excessDays: 0, compOffDays: 0, sundayWorkedDays: 0,
+      normalDays: 0, normalHours: 0, crmDays: 0, crmHours: 0,
+      overtimeShifts: 0, overtimeHours: 0, holidayShifts: 0, holidayHours: 0,
+      lctCount: 0, totalKm: 0, approvedLeaveDays: 0,
+      lateCount: 0, lateMinutes: 0, earlyCount: 0, earlyMinutes: 0, forgotOutCount: 0
+    };
+
+    summaryRows.forEach((r, idx) => {
+      const approvedCompDays = r.compOffApproved ? r.compOffDays : 0;
+      const compStatus = r.compOffApproved ? 'Đã cộng nghỉ bù' : (r.excessDays > 0 ? 'Chưa tích duyệt' : '');
+      s1AoA.push([
+        idx + 1,
+        r.user.name,
+        String(r.user.phone),
+        getRoleLabel(r.user.role),
+        r.workedDays,
+        r.standardDays,
+        r.excessDays,
+        compStatus,
+        approvedCompDays,
+        r.sundayWorkedDays,
+        r.normalDays,
+        r.normalHours,
+        r.crmDays,
+        r.crmHours,
+        r.overtimeShifts,
+        r.overtimeHours,
+        r.holidayShifts,
+        r.holidayHours,
+        r.lctCount,
+        r.totalKm,
+        r.approvedLeaveDays,
+        r.lateCount,
+        r.lateMinutes,
+        r.earlyCount,
+        r.earlyMinutes,
+        r.forgotOutCount
+      ]);
+      totals.workedDays += r.workedDays;
+      totals.excessDays += r.excessDays;
+      totals.compOffDays += approvedCompDays;
+      totals.sundayWorkedDays += r.sundayWorkedDays;
+      totals.normalDays += r.normalDays;
+      totals.normalHours += r.normalHours;
+      totals.crmDays += r.crmDays;
+      totals.crmHours += r.crmHours;
+      totals.overtimeShifts += r.overtimeShifts;
+      totals.overtimeHours += r.overtimeHours;
+      totals.holidayShifts += r.holidayShifts;
+      totals.holidayHours += r.holidayHours;
+      totals.lctCount += r.lctCount;
+      totals.totalKm += r.totalKm;
+      totals.approvedLeaveDays += r.approvedLeaveDays;
+      totals.lateCount += r.lateCount;
+      totals.lateMinutes += r.lateMinutes;
+      totals.earlyCount += r.earlyCount;
+      totals.earlyMinutes += r.earlyMinutes;
+      totals.forgotOutCount += r.forgotOutCount;
+    });
+
+    s1AoA.push([
+      '', 'TỔNG CỘNG TOÀN ĐƠN VỊ', '', '',
+      totals.workedDays, stdInfo.standardDays, totals.excessDays,
+      '', Math.round(totals.compOffDays * 10) / 10, totals.sundayWorkedDays,
+      totals.normalDays, Math.round(totals.normalHours * 10) / 10,
+      totals.crmDays, Math.round(totals.crmHours * 10) / 10,
+      totals.overtimeShifts, Math.round(totals.overtimeHours * 10) / 10,
+      totals.holidayShifts, Math.round(totals.holidayHours * 10) / 10,
+      totals.lctCount, Math.round(totals.totalKm * 10) / 10,
+      totals.approvedLeaveDays,
+      totals.lateCount, totals.lateMinutes,
+      totals.earlyCount, totals.earlyMinutes,
+      totals.forgotOutCount
+    ]);
+
+    const ws1 = XLSX.utils.aoa_to_sheet(s1AoA);
+    ws1['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 25 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 25 } }
+    ];
+    ws1['!cols'] = [
+      { wch: 5 }, { wch: 24 }, { wch: 14 }, { wch: 18 },
+      { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 13 }, { wch: 10 },
+      { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 11 },
+      { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 11 },
+      { wch: 11 }, { wch: 14 }, { wch: 12 },
+      { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 11 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws1, 'TongHopThang');
+
+    // =========================================================
+    // SHEET 2: BẢNG CHẤM CÔNG MA TRẬN THEO NGÀY 01 -> 31 (ĐÁNH DẤU CN)
+    // =========================================================
+    const dayHeaders = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dd = String(d).padStart(2, '0');
+      const dk = `${targetMonth}-${dd}`;
+      dayHeaders.push(isSundayIso(dk) ? `${dd}(CN)` : dd);
+    }
+
+    const s2AoA = [
+      [`BẢNG CHẤM CÔNG CHI TIẾT THEO NGÀY — THÁNG ${monthLabel} (Chuẩn: ${stdInfo.standardDays} công, trừ ${stdInfo.sundayCount} Chủ Nhật)`],
+      ['Ký hiệu: X = Ca thường | X(M) = Ca thường đi muộn | CRM = Trực CRM cả ngày | TC = Tăng ca | L = Trực lễ | P = Nghỉ phép duyệt | (CN) = Chủ Nhật'],
+      [],
+      ['STT', 'Họ và Tên', 'Số Điện Thoại', ...dayHeaders, 'Tổng Công', 'Chuẩn Tháng', 'Thừa (+)', 'Nghỉ Bù Cộng', 'Nghỉ Phép', 'Tổng Km']
+    ];
+
+    summaryRows.forEach((row, idx) => {
+      const u = row.user;
+      const leaveDates = getApprovedLeaveDateSet(allRequests, u.phone, targetMonth);
+      const uMonthRecs = monthRecords.filter(r => r.user_id === u.phone);
+      const recsByDay = new Map();
+      uMonthRecs.forEach(r => {
+        const dk = r.date_key || getVnDateKey(r.timestamp);
+        if (!recsByDay.has(dk)) recsByDay.set(dk, []);
+        recsByDay.get(dk).push(r);
+      });
+
+      const cells = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dk = `${targetMonth}-${String(d).padStart(2, '0')}`;
+        const dayList = recsByDay.get(dk) || [];
+        const tags = [];
+
+        const normalList = dayList.filter(r => (r.shift_mode || 'normal') === 'normal');
+        if (normalList.length > 0) {
+          const firstIn = normalList.find(r => r.type === 'IN');
+          const isLate = firstIn && getVnMinutesOfDay(firstIn.timestamp) > stdInMins;
+          tags.push(isLate ? 'X(M)' : 'X');
+        }
+        if (dayList.some(r => r.shift_mode === 'crm')) tags.push('CRM');
+        if (dayList.some(r => r.shift_mode === 'overtime')) tags.push('TC');
+        if (dayList.some(r => r.shift_mode === 'holiday')) tags.push('L');
+        if (tags.length === 0 && leaveDates.has(dk)) tags.push('P');
+
+        cells.push(tags.join('+'));
+      }
+
+      s2AoA.push([
+        idx + 1,
+        u.name,
+        String(u.phone),
+        ...cells,
+        row.workedDays,
+        row.standardDays,
+        row.excessDays,
+        row.compOffApproved ? row.compOffDays : 0,
+        row.approvedLeaveDays,
+        row.totalKm
+      ]);
+    });
+
+    const ws2 = XLSX.utils.aoa_to_sheet(s2AoA);
+    ws2['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: daysInMonth + 8 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: daysInMonth + 8 } }
+    ];
+    ws2['!cols'] = [
+      { wch: 5 }, { wch: 24 }, { wch: 13 },
+      ...dayHeaders.map(h => ({ wch: h.includes('CN') ? 7.5 : 6 })),
+      { wch: 10 }, { wch: 11 }, { wch: 9 }, { wch: 12 }, { wch: 10 }, { wch: 10 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws2, 'BangCong_01_31');
+
+    // =========================================================
+    // SHEET 3: BẢNG KÊ CHI TIẾT LCT / PCT & QUÃNG ĐƯỜNG (KM)
+    // =========================================================
+    const lctRecords = monthRecords.filter(r => hasLctReport(r));
+    const s3AoA = [
+      [`BẢNG KÊ LCT/PCT, ĐỊA ĐIỂM CÔNG TÁC & QUÃNG ĐƯỜNG (KM) — THÁNG ${monthLabel}`],
+      [],
+      ['STT', 'Ngày', 'Giờ Chấm', 'Họ và Tên', 'Số Điện Thoại', 'Chế Độ Ca', 'Loại Phiếu', 'Số LCT/PCT', 'Địa Điểm Thực Hiện', 'Quãng Đường (km)', 'Ghi Chú Công Việc']
+    ];
+
+    let sheet3KmTotal = 0;
+    lctRecords.forEach((r, idx) => {
+      const kmVal = Number(r.travel_km) > 0 ? (Math.round(Number(r.travel_km) * 10) / 10) : 0;
+      sheet3KmTotal += kmVal;
+      s3AoA.push([
+        idx + 1,
+        formatVnDateOnly(r.date_key || getVnDateKey(r.timestamp)),
+        r.datetime_str || '',
+        r.user_name || '',
+        String(r.user_phone || ''),
+        getShiftModeLabel(r.shift_mode),
+        r.lct_type === 'PCT' ? 'Phiếu CT (PCT)' : (r.lct_type === 'LCT' ? 'Lệnh CT (LCT)' : 'Khác'),
+        formatLctCodeDisplay(r),
+        r.lct_location || '',
+        kmVal,
+        r.note || ''
+      ]);
+    });
+
+    s3AoA.push([
+      '', `TỔNG CỘNG (${lctRecords.length} lượt)`, '', '', '', '', '', '', '',
+      Math.round(sheet3KmTotal * 10) / 10, ''
+    ]);
+
+    const ws3 = XLSX.utils.aoa_to_sheet(s3AoA);
+    ws3['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }];
+    ws3['!cols'] = [
+      { wch: 5 }, { wch: 12 }, { wch: 20 }, { wch: 22 }, { wch: 14 },
+      { wch: 13 }, { wch: 15 }, { wch: 18 }, { wch: 32 }, { wch: 15 }, { wch: 26 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws3, 'BangKe_LCT_PCT_Km');
+
+    // =========================================================
+    // SHEET 4: CHI TIẾT TỪNG LƯỢT CHẤM CÔNG VÀO / RA TRONG THÁNG
+    // =========================================================
+    const roleMapXlsx = buildUserRoleMap();
+    const s4AoA = [
+      [`CHI TIẾT LƯỢT CHẤM CÔNG VÀO / RA — THÁNG ${monthLabel}`],
+      [],
+      [
+        'STT', 'Thời Gian', 'Họ và Tên', 'Số Điện Thoại', 'Chức Danh', 'Hành Động',
+        'Chế Độ Ca', 'Trạng Thái Giờ (07:30-18:30)', 'Nguồn Chấm',
+        'Khoảng Cách (m)', 'Vị Trí', 'Ghi Chú',
+        'Số LCT/PCT', 'Địa Điểm LCT/PCT', 'Quãng Đường (km)',
+        'Link Google Maps', 'Link Ảnh Google Drive'
+      ]
+    ];
+
+    monthRecords.forEach((r, idx) => {
+      const punct = getPunctualityInfo(r);
+      const punctStr = punct ? punct.label : ((r.shift_mode && r.shift_mode !== 'normal') ? 'Ca đặc thù' : 'Đúng giờ');
+      const distM = getRecordDistance(r);
+      const recRole = roleMapXlsx.get(r.user_id) || normalizeRole(r.user_role);
+      s4AoA.push([
+        idx + 1,
+        r.datetime_str || '',
+        r.user_name || '',
+        String(r.user_phone || ''),
+        getRoleLabel(recRole),
+        r.type === 'IN' ? 'Vào ca' : 'Ra ca',
+        getShiftModeLabel(r.shift_mode),
+        punctStr,
+        r.is_manual ? `Admin chấm bù (${r.created_by_admin || 'Admin'})` : 'Tự chấm',
+        distM,
+        distM <= state.officeRadius ? 'Tại đơn vị' : 'Ngoài phạm vi',
+        r.note || '',
+        formatLctCodeDisplay(r),
+        r.lct_location || '',
+        Number(r.travel_km) > 0 ? (Math.round(Number(r.travel_km) * 10) / 10) : '',
+        `https://www.google.com/maps?q=${r.latitude},${r.longitude}`,
+        r.photo_drive_view_url || (r.has_photo ? 'Lưu trên Firebase' : '')
+      ]);
+    });
+
+    const ws4 = XLSX.utils.aoa_to_sheet(s4AoA);
+    ws4['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 16 } }];
+    ws4['!cols'] = [
+      { wch: 5 }, { wch: 20 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 10 },
+      { wch: 13 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 14 },
+      { wch: 24 }, { wch: 16 }, { wch: 26 }, { wch: 13 }, { wch: 36 }, { wch: 36 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws4, 'ChiTiet_VaoRa');
+
+    // =========================================================
+    // SHEET 5: ĐƠN NGHỈ PHÉP & GIẢI TRÌNH TRONG THÁNG
+    // =========================================================
+    const monthRequests = allRequests.filter(r => {
+      const f = String(r.from_date || '');
+      const t = String(r.to_date || '');
+      const c = r.created_at ? getVnDateKey(r.created_at) : '';
+      return f.startsWith(targetMonth) || t.startsWith(targetMonth) || c.startsWith(targetMonth);
+    });
+
+    const s5AoA = [
+      [`DANH SÁCH ĐƠN NGHỈ PHÉP & GIẢI TRÌNH — THÁNG ${monthLabel}`],
+      [],
+      ['STT', 'Họ và Tên', 'Số Điện Thoại', 'Loại Đơn', 'Thời Gian Áp Dụng', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ghi Chú Admin', 'Thời Điểm Gửi']
+    ];
+
+    monthRequests.forEach((r, idx) => {
+      s5AoA.push([
+        idx + 1,
+        r.user_name || '',
+        String(r.user_phone || ''),
+        r.category === 'leave' ? 'Nghỉ phép' : 'Giải trình',
+        formatRequestTimeSpan(r),
+        r.reason || '',
+        r.status === 'approved' ? 'Đã duyệt OK' : (r.status === 'rejected' ? 'Từ chối' : 'Chờ duyệt'),
+        r.reviewed_by || '',
+        r.admin_note || '',
+        r.created_time_str || ''
+      ]);
+    });
+
+    const ws5 = XLSX.utils.aoa_to_sheet(s5AoA);
+    ws5['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
+    ws5['!cols'] = [
+      { wch: 5 }, { wch: 22 }, { wch: 14 }, { wch: 13 }, { wch: 26 },
+      { wch: 32 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 20 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws5, 'DonNghiPhep');
+
+    // Xuất file .xlsx trực tiếp
+    const [yyyy, mm] = targetMonth.split('-');
+    const filename = `BaoCao_ChamCong_EVNNPC_Thang_${mm || '00'}-${yyyy || '2026'}.xlsx`;
+    XLSX.writeFile(wb, filename);
+
+    playSuccessSound();
+    showToast(`📗 Đã xuất trọn bộ Excel (.xlsx) 5 trang cho tháng ${monthLabel}!`, 'success', 4500);
+  } catch (err) {
+    playErrorSound();
+    showToast('Lỗi xuất file Excel .xlsx: ' + err.message, 'error', 5000);
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+      triggerBtn.textContent = origText;
+    }
+  }
+}
+
+document.getElementById('btn-export-monthly-xlsx').addEventListener('click', (e) => {
+  const monthKey = document.getElementById('summary-month-input').value || getVnDateKey().slice(0, 7);
+  exportMonthlyExcelWorkbook(monthKey, e.currentTarget);
+});
+
+document.getElementById('btn-eom-export-now').addEventListener('click', (e) => {
+  const monthKey = currentEomTargetMonth || document.getElementById('summary-month-input').value || getVnDateKey().slice(0, 7);
+  exportMonthlyExcelWorkbook(monthKey, e.currentTarget);
+});
+
+document.getElementById('btn-eom-dismiss').addEventListener('click', () => {
+  if (currentEomTargetMonth) {
+    localStorage.setItem(`cc_eom_dismissed_${currentEomTargetMonth}`, '1');
+  }
+  const banner = document.getElementById('eom-export-banner');
+  if (banner) banner.classList.add('hidden');
 });
 
 // --- Dọn ảnh / Dọn hẳn dòng dữ liệu chấm công ---
 function openCleanupModal() {
   if (!isAdmin()) {
-    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được dọn dữ liệu/ảnh!', 'error');
+    return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được dọn dữ liệu/ảnh!', 'error');
   }
   document.getElementById('modal-cleanup-photos').classList.add('show');
 }
@@ -3315,7 +4386,7 @@ function renderAdminRequestsList() {
 
 function openReviewRequestModal(reqId, decision) {
   if (!isAdmin()) {
-    return showToast('Tài khoản Tổ trưởng chỉ được xem đơn, không có quyền duyệt/từ chối!', 'error');
+    return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ được xem đơn, không có quyền duyệt/từ chối!', 'error');
   }
   const req = state.adminRequestsCache.find(r => r.id === reqId);
   if (!req) return;
@@ -3444,13 +4515,17 @@ function renderAdminStaffTable(lastPunchMap = null) {
       : `<span style="color: var(--text-dim); font-size: 0.8rem;">Chưa vào ca</span>`;
 
     const isCurrentAdmin = state.user && state.user.phone === u.phone;
+    const curRole = normalizeRole(u.role);
     const roleCellHtml = isCurrentAdmin
       ? `<span class="badge badge-admin">👑 Quản lý (Admin)</span>`
       : `
-        <select class="staff-role-select" data-role-phone="${escapeHtml(u.phone)}" data-role-name="${escapeHtml(u.name)}" data-prev-role="${escapeHtml(u.role || 'employee')}" title="Đổi vai trò tài khoản này">
-          <option value="employee" ${u.role === 'employee' || !u.role ? 'selected' : ''}>👤 Nhân viên</option>
-          <option value="leader" ${u.role === 'leader' ? 'selected' : ''}>👁️ Tổ trưởng (Chỉ xem)</option>
-          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>👑 Quản lý (Admin)</option>
+        <select class="staff-role-select" data-role-phone="${escapeHtml(u.phone)}" data-role-name="${escapeHtml(u.name)}" data-prev-role="${escapeHtml(curRole)}" title="Đổi chức danh / vai trò tài khoản này">
+          <option value="employee" ${curRole === 'employee' ? 'selected' : ''}>👤 Nhân viên (không ghi LCT/PCT)</option>
+          <option value="service_worker" ${curRole === 'service_worker' ? 'selected' : ''}>🔧 Công nhân dịch vụ (không ghi LCT/PCT)</option>
+          <option value="worker" ${curRole === 'worker' ? 'selected' : ''}>👷 Công nhân (có LCT/PCT)</option>
+          <option value="deputy" ${curRole === 'deputy' ? 'selected' : ''}>⭐ Tổ phó (Chỉ xem + LCT/PCT)</option>
+          <option value="leader" ${curRole === 'leader' ? 'selected' : ''}>👁️ Tổ trưởng (Chỉ xem + LCT/PCT)</option>
+          <option value="admin" ${curRole === 'admin' ? 'selected' : ''}>👑 Quản lý (Admin)</option>
         </select>
       `;
 
@@ -3491,16 +4566,19 @@ function renderAdminStaffTable(lastPunchMap = null) {
       if (!isAdmin()) return;
       const phone = sel.dataset.rolePhone;
       const name = sel.dataset.roleName;
-      const prevRole = sel.dataset.prevRole || 'employee';
-      const newRole = ['admin', 'leader', 'employee'].includes(sel.value) ? sel.value : 'employee';
+      const prevRole = normalizeRole(sel.dataset.prevRole);
+      const newRole = normalizeRole(sel.value);
       if (newRole === prevRole) return;
 
       const labelMap = {
         admin: 'Quản lý (Admin toàn quyền)',
-        leader: 'Tổ trưởng (Chỉ xem công, ảnh & đơn)',
-        employee: 'Nhân viên thông thường'
+        leader: 'Tổ trưởng (Chỉ xem + ghi LCT/PCT khi tan ca)',
+        deputy: 'Tổ phó (Chỉ xem + ghi LCT/PCT khi tan ca)',
+        worker: 'Công nhân (ghi LCT/PCT & km khi tan ca)',
+        service_worker: 'Công nhân dịch vụ (KHÔNG cần ghi LCT/PCT khi tan ca)',
+        employee: 'Nhân viên (KHÔNG cần ghi LCT/PCT khi tan ca)'
       };
-      if (!confirm(`Đổi vai trò của "${name}" (${phone})\nsang: ${labelMap[newRole]}?`)) {
+      if (!confirm(`Đổi chức danh của "${name}" (${phone})\nsang: ${labelMap[newRole]}?`)) {
         sel.value = prevRole;
         return;
       }
@@ -3509,11 +4587,11 @@ function renderAdminStaffTable(lastPunchMap = null) {
         await DB.updateUser(phone, { role: newRole });
         sel.dataset.prevRole = newRole;
         playSuccessSound();
-        showToast(`✅ Đã đổi "${name}" sang vai trò ${labelMap[newRole]}!`, 'success');
+        showToast(`✅ Đã đổi "${name}" sang chức danh ${labelMap[newRole]}!`, 'success');
         await loadAdminData();
       } catch (err) {
         sel.value = prevRole;
-        showToast('Lỗi đổi vai trò: ' + err.message, 'error');
+        showToast('Lỗi đổi chức danh: ' + err.message, 'error');
       } finally {
         sel.disabled = false;
       }
@@ -3535,6 +4613,8 @@ function renderAdminStaffTable(lastPunchMap = null) {
 
 document.getElementById('filter-date').addEventListener('change', renderAdminHistoryTable);
 document.getElementById('filter-user').addEventListener('change', renderAdminHistoryTable);
+const filterRoleEl = document.getElementById('filter-role');
+if (filterRoleEl) filterRoleEl.addEventListener('change', renderAdminHistoryTable);
 document.getElementById('filter-type').addEventListener('change', renderAdminHistoryTable);
 document.getElementById('filter-shift-mode').addEventListener('change', renderAdminHistoryTable);
 document.getElementById('btn-admin-refresh').addEventListener('click', loadAdminData);
@@ -3552,7 +4632,7 @@ function getCurrentVnTimeHHMM() {
 
 function openAdminPunchModal(preselectPhone = null, preset = null) {
   if (!isAdmin()) {
-    return showToast('Tài khoản Tổ trưởng chỉ có quyền xem, không được chấm bù!', 'error');
+    return showToast('Tài khoản Tổ trưởng / Tổ phó chỉ có quyền xem, không được chấm bù!', 'error');
   }
   const userSel = document.getElementById('manual-user-select');
   if (!state.allUsersList || state.allUsersList.length === 0) {
@@ -3670,7 +4750,8 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
   }
 
   let csv = '\uFEFF';
-  csv += 'STT,Họ và Tên,Số Điện Thoại,Hành Động,Chế Độ Ca,Trạng Thái Giờ (07:30-18:30),Nguồn Chấm,Thời Gian,Khoảng Cách Công Ty (m),Trạng Thái Vị Trí,Ghi Chú,Vĩ Độ,Kinh Độ,Sai Số (m),Link Google Maps,Link Ảnh Google Drive\n';
+  csv += 'STT,Họ và Tên,Số Điện Thoại,Chức Danh,Hành Động,Chế Độ Ca,Trạng Thái Giờ (07:30-18:30),Nguồn Chấm,Thời Gian,Khoảng Cách Công Ty (m),Trạng Thái Vị Trí,Ghi Chú,Số LCT/PCT,Địa Điểm Thực Hiện LCT/PCT,Quãng Đường (km),Vĩ Độ,Kinh Độ,Sai Số (m),Link Google Maps,Link Ảnh Google Drive\n';
+  const roleMapCsv = buildUserRoleMap();
   rows.forEach((r, idx) => {
     const typeStr = r.type === 'IN' ? 'Vào ca' : 'Ra ca';
     const modeStr = getShiftModeLabel(r.shift_mode);
@@ -3682,7 +4763,11 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
     const mapUrl = `https://www.google.com/maps?q=${r.latitude},${r.longitude}`;
     const esc = v => `"${String(v || '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
     const photoCol = r.photo_drive_view_url ? r.photo_drive_view_url : (r.has_photo ? 'Lưu trên Firebase' : 'Không');
-    csv += `${idx + 1},${esc(r.user_name)},${r.user_phone},${typeStr},${modeStr},${esc(punctStr)},${esc(sourceStr)},${esc(r.datetime_str)},${distM},${esc(zoneStr)},${esc(r.note)},${r.latitude},${r.longitude},${r.accuracy},"${mapUrl}",${esc(photoCol)}\n`;
+    const lctCodeCol = formatLctCodeDisplay(r);
+    const lctLocCol = r.lct_location || '';
+    const kmCol = Number(r.travel_km) > 0 ? (Math.round(Number(r.travel_km) * 10) / 10) : '';
+    const roleStr = getRoleLabel(roleMapCsv.get(r.user_id) || normalizeRole(r.user_role));
+    csv += `${idx + 1},${esc(r.user_name)},${r.user_phone},${esc(roleStr)},${typeStr},${modeStr},${esc(punctStr)},${esc(sourceStr)},${esc(r.datetime_str)},${distM},${esc(zoneStr)},${esc(r.note)},${esc(lctCodeCol)},${esc(lctLocCol)},${kmCol},${r.latitude},${r.longitude},${r.accuracy},"${mapUrl}",${esc(photoCol)}\n`;
   });
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3718,7 +4803,7 @@ document.getElementById('form-add-user').addEventListener('submit', async (e) =>
   const phone = document.getElementById('add-user-phone').value.trim();
   const pin = document.getElementById('add-user-pin').value.trim();
   const rawRole = document.getElementById('add-user-role').value;
-  const role = ['admin', 'leader', 'employee'].includes(rawRole) ? rawRole : 'employee';
+  const role = normalizeRole(rawRole);
 
   if (!name) return showToast('Họ tên nhân viên không được để trống!', 'error');
   if (!/^\d{9,11}$/.test(phone)) return showToast('Số điện thoại phải từ 9 đến 11 chữ số!', 'error');
@@ -4043,6 +5128,8 @@ window.openCleanupModal = openCleanupModal;
 window.selectShiftMode = selectShiftMode;
 window.openAdminPunchModal = openAdminPunchModal;
 window.setQuickWorkNote = setQuickWorkNote;
+window.selectLctType = selectLctType;
+window.openCheckoutReportModal = openCheckoutReportModal;
 window.handleInstallAppClick = handleInstallAppClick;
 window.openInstallModal = openInstallModal;
 window.switchInstallGuideTab = switchInstallGuideTab;

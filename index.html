@@ -12,8 +12,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=21">
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=21">
   <link rel="icon" type="image/svg+xml" href="./icon.svg?v=21">
-  <link rel="manifest" href="./manifest.json?v=22">
-  <link rel="stylesheet" href="./styles.css?v=22">
+  <link rel="manifest" href="./manifest.json?v=26">
+  <link rel="stylesheet" href="./styles.css?v=26">
 </head>
 <body>
 
@@ -202,6 +202,7 @@
               ⚪ Đang kiểm tra trạng thái ca...
             </div>
           </div>
+          <div id="my-month-work-strip" class="my-month-strip hidden"></div>
         </div>
 
         <!-- KHU VỰC CHỌN CHẾ ĐỘ CA & NÚT CHẤM CÔNG DUY NHẤT -->
@@ -275,7 +276,11 @@
             <span class="result-label">Lưu ảnh:</span>
             <span id="res-sync-status" class="result-value sync-status-pending">☁️ Đang đồng bộ lên Google Drive...</span>
           </div>
-          <div style="margin-top: 6px; text-align: right;">
+          <div id="res-lct-box" class="res-lct-box hidden"></div>
+          <div style="margin-top: 6px; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="btn-res-edit-lct" class="btn-secondary hidden" style="padding: 6px 12px; font-size: 0.78rem;">
+              📋 Ghi / Sửa LCT/PCT
+            </button>
             <a id="res-map-link" href="#" target="_blank" class="btn-map">
               📍 Mở trên Google Maps ➔
             </a>
@@ -378,10 +383,27 @@
     <!-- ==================================================== -->
     <div id="view-admin" class="admin-container hidden">
 
-      <!-- Thông báo chế độ Chỉ xem dành riêng cho Tổ trưởng -->
+      <!-- Thông báo chế độ Chỉ xem dành riêng cho Tổ trưởng / Tổ phó -->
       <div id="leader-readonly-banner" class="leader-banner hidden">
         <span>👁️</span>
-        <span><b>Chế độ Tổ trưởng (Chỉ xem):</b> Bạn có thể xem số lượng chấm công, ảnh chụp & đơn xin nghỉ — không thể chấm bù, duyệt đơn hoặc xóa dữ liệu.</span>
+        <span id="leader-readonly-banner-text"><b>Chế độ Tổ trưởng / Tổ phó (Chỉ xem):</b> Bạn có thể xem số lượng chấm công, ảnh chụp, tổng hợp tháng &amp; đơn xin nghỉ — không thể chấm bù, duyệt đơn hoặc xóa dữ liệu.</span>
+      </div>
+
+      <!-- Thanh nhắc tự động xuất Bộ Excel Cuối Tháng (.xlsx) vào ngày 25-31 & ngày 1-3 -->
+      <div id="eom-export-banner" class="eom-banner hidden">
+        <div class="eom-banner-left">
+          <span class="eom-icon">📗</span>
+          <div>
+            <div id="eom-banner-title" class="eom-title">Đã đến kỳ chốt công cuối tháng!</div>
+            <div id="eom-banner-sub" class="eom-sub">Xuất ngay trọn bộ Excel (.xlsx) 5 trang: Tổng hợp • Bảng công 01–31 • Bảng kê LCT/PCT &amp; Km • Chi tiết • Đơn nghỉ.</div>
+          </div>
+        </div>
+        <div class="eom-banner-actions">
+          <button type="button" id="btn-eom-export-now" class="btn-success btn-xlsx">
+            📗 Xuất Excel Cuối Tháng (.xlsx)
+          </button>
+          <button type="button" id="btn-eom-dismiss" class="btn-secondary" style="padding: 7px 10px; font-size: 0.78rem;" title="Ẩn nhắc tháng này">✕</button>
+        </div>
       </div>
 
       <!-- Admin Tabs Navigation -->
@@ -487,6 +509,16 @@
 
           <select id="filter-user" class="filter-select">
             <option value="all">👤 Tất cả nhân viên</option>
+          </select>
+
+          <select id="filter-role" class="filter-select">
+            <option value="all">🎖️ Tất cả chức danh</option>
+            <option value="worker">👷 Công nhân</option>
+            <option value="service_worker">🔧 Công nhân dịch vụ</option>
+            <option value="employee">👤 Nhân viên</option>
+            <option value="deputy">⭐ Tổ phó</option>
+            <option value="leader">👁️ Tổ trưởng</option>
+            <option value="admin">👑 Quản lý (Admin)</option>
           </select>
 
           <select id="filter-type" class="filter-select">
@@ -595,12 +627,49 @@
             🔄 Cập nhật số liệu
           </button>
 
-          <button id="btn-export-summary-csv" class="btn-success" style="margin-left: auto;">
-            📥 Xuất Excel Tổng Hợp Tháng
-          </button>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto;">
+            <button id="btn-export-monthly-xlsx" class="btn-success btn-xlsx">
+              📗 Xuất Bộ Excel Cuối Tháng (.xlsx)
+            </button>
+            <button id="btn-export-summary-csv" class="btn-secondary" title="Xuất nhanh dạng CSV">
+              📄 CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="xlsx-sheets-hint">
+          <span>📗</span>
+          <span>File <b>Excel cuối tháng (.xlsx)</b> gồm đầy đủ <b>5 trang tính</b>: <b>1. Tổng hợp tháng &amp; Nghỉ bù</b> • <b>2. Bảng chấm công ngày 01–31 (đánh dấu CN)</b> • <b>3. Bảng kê LCT/PCT &amp; Km</b> • <b>4. Chi tiết Vào/Ra</b> • <b>5. Đơn nghỉ phép</b>.</span>
+        </div>
+
+        <!-- Thanh định mức công chuẩn tháng (T2 - CN: 6 công/tuần -> 26 hoặc 27 công/tháng) -->
+        <div id="summary-standard-bar" class="work-standard-bar">
+          <div class="work-standard-info">
+            <span class="work-standard-icon">📆</span>
+            <div>
+              <div id="summary-calendar-title" class="work-standard-title">Định mức công chuẩn tháng</div>
+              <div id="summary-calendar-sub" class="work-standard-sub">Tuần làm việc T2 – CN (6 công/tuần, trừ Chủ Nhật)</div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <label for="summary-standard-mode" style="font-size: 0.78rem; color: var(--text-muted); font-weight: 600;">Định mức:</label>
+            <select id="summary-standard-mode" class="filter-select" style="padding: 6px 10px; font-size: 0.8rem;">
+              <option value="auto_cal">🤖 Tự động theo lịch (trừ Chủ Nhật)</option>
+              <option value="fixed_26">📌 Chuẩn 26 công / tháng</option>
+              <option value="fixed_27">📌 Chuẩn 27 công / tháng</option>
+            </select>
+          </div>
         </div>
 
         <div class="summary-mini-grid">
+          <div class="summary-mini-card">
+            <span>Công chuẩn tháng</span>
+            <strong id="sum-standard-days" style="color: #7dd3fc;">26 công</strong>
+          </div>
+          <div class="summary-mini-card">
+            <span>Thừa công / Nghỉ bù</span>
+            <strong id="sum-total-compoff" style="color: #fb923c;">0 ngày</strong>
+          </div>
           <div class="summary-mini-card">
             <span>Ngày công thường</span>
             <strong id="sum-total-normal" class="text-success">0</strong>
@@ -617,6 +686,10 @@
             <span>Muộn / Sớm / Quên Ra</span>
             <strong id="sum-total-alerts" class="text-danger">0 / 0 / 0</strong>
           </div>
+          <div class="summary-mini-card">
+            <span>Tổng LCT/PCT &amp; Quãng đường</span>
+            <strong id="sum-total-km" style="color: #fde047;">0 km</strong>
+          </div>
         </div>
 
         <div class="table-responsive">
@@ -624,17 +697,19 @@
             <thead>
               <tr>
                 <th>Nhân Viên</th>
+                <th>Tổng Công / Chuẩn</th>
+                <th>Vượt Công &amp; Nghỉ Bù</th>
                 <th>Công Thường</th>
                 <th>Trực CRM</th>
-                <th>Tăng Ca</th>
-                <th>Trực Lễ</th>
+                <th>Tăng Ca / Lễ</th>
+                <th>LCT/PCT &amp; Km</th>
                 <th>Nghỉ Phép</th>
-                <th>Muộn / Sớm / Quên Ra</th>
+                <th>Muộn / Sớm / Quên</th>
               </tr>
             </thead>
             <tbody id="admin-summary-tbody">
               <tr>
-                <td colspan="7" class="text-center" style="padding: 24px; color: var(--text-dim);">
+                <td colspan="9" class="text-center" style="padding: 24px; color: var(--text-dim);">
                   Đang tính toán bảng công tổng hợp tháng...
                 </td>
               </tr>
@@ -658,7 +733,7 @@
               <tr>
                 <th>Họ và Tên</th>
                 <th>Số Điện Thoại</th>
-                <th>Vai Trò</th>
+                <th>Chức Danh / Vai Trò</th>
                 <th>Ca Hiện Tại</th>
                 <th>Trạng Thái</th>
                 <th>Thao Tác</th>
@@ -706,12 +781,18 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Vai trò</label>
+          <label class="form-label">Chức danh / Vai trò</label>
           <select id="add-user-role" class="form-input no-icon">
-            <option value="employee">👤 Nhân viên thông thường</option>
-            <option value="leader">👁️ Tổ trưởng (Chỉ xem công, ảnh & đơn)</option>
+            <option value="employee">👤 Nhân viên (không cần ghi LCT/PCT khi tan ca)</option>
+            <option value="service_worker">🔧 Công nhân dịch vụ (không cần ghi LCT/PCT khi tan ca)</option>
+            <option value="worker">👷 Công nhân (ghi LCT/PCT &amp; km khi tan ca)</option>
+            <option value="deputy">⭐ Tổ phó (Xem giám sát + ghi LCT/PCT)</option>
+            <option value="leader">👁️ Tổ trưởng (Xem giám sát + ghi LCT/PCT)</option>
             <option value="admin">👑 Quản lý (Admin toàn quyền)</option>
           </select>
+          <small style="color: #7dd3fc; display: block; margin-top: 5px;">
+            ℹ️ <b>Nhân viên</b> &amp; <b>Công nhân dịch vụ</b> khi bấm tan ca sẽ không hiện bảng ghi LCT/PCT.
+          </small>
         </div>
 
         <div class="modal-footer">
@@ -1108,10 +1189,74 @@
     </div>
   </div>
 
+  <!-- ==================================================== -->
+  <!-- MODAL 10: BÁO CÁO LCT/PCT & SỐ KM SAU KHI TAN CA     -->
+  <!-- ==================================================== -->
+  <div id="modal-checkout-report" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">📋 Báo Cáo LCT/PCT &amp; Quãng Đường</h3>
+        <button class="modal-close" onclick="closeModal('modal-checkout-report')">&times;</button>
+      </div>
+
+      <div class="alert alert-success" style="font-size: 0.83rem; margin-bottom: 14px;">
+        <span>✅</span>
+        <span id="checkout-report-banner">Đã chấm công tan ca thành công! Vui lòng ghi lại số <b>LCT/PCT</b>, địa điểm thực hiện và <b>số km quãng đường</b> hôm nay.</span>
+      </div>
+
+      <form id="form-checkout-report">
+        <input type="hidden" id="checkout-report-att-id">
+        <input type="hidden" id="checkout-lct-type" value="LCT">
+
+        <div class="form-group">
+          <label class="form-label">Loại chứng từ công tác</label>
+          <div class="lct-type-tabs">
+            <button type="button" class="lct-type-btn active" data-lct="LCT" onclick="selectLctType('LCT')">
+              📄 Lệnh CT (LCT)
+            </button>
+            <button type="button" class="lct-type-btn" data-lct="PCT" onclick="selectLctType('PCT')">
+              📑 Phiếu CT (PCT)
+            </button>
+            <button type="button" class="lct-type-btn" data-lct="NONE" onclick="selectLctType('NONE')">
+              📝 Không có phiếu
+            </button>
+          </div>
+        </div>
+
+        <div id="checkout-lct-fields">
+          <div class="form-group">
+            <label class="form-label" for="checkout-lct-code">Số LCT / PCT</label>
+            <input type="text" id="checkout-lct-code" class="form-input no-icon" maxlength="100" placeholder="VD: LCT-125/2026 hoặc PCT-08/11...">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="checkout-lct-location">Địa điểm thực hiện LCT / PCT</label>
+            <input type="text" id="checkout-lct-location" class="form-input no-icon" maxlength="180" placeholder="VD: TBA 110kV Đô Lương, Lộ 371, Cột 45...">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="checkout-distance-km">Số km quãng đường di chuyển (km)</label>
+          <div class="input-with-unit">
+            <input type="number" id="checkout-distance-km" class="form-input no-icon" min="0" max="2000" step="0.1" inputmode="decimal" placeholder="VD: 24.5">
+            <span class="input-unit-tag">km</span>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-checkout-report')">Bỏ qua</button>
+          <button type="submit" id="btn-save-checkout-report" class="btn-primary" style="width: auto;">
+            ✅ Lưu báo cáo
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- TOAST CONTAINER -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="./firebase-config.js?v=22"></script>
-  <script type="module" src="./app.js?v=22"></script>
+  <script src="./firebase-config.js?v=26"></script>
+  <script type="module" src="./app.js?v=26"></script>
 </body>
 </html>
